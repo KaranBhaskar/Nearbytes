@@ -1,0 +1,23 @@
+{
+  "name": "restaurant-nearby-prototype",
+  "version": "1.0.0",
+  "description": "Location-based restaurant discovery prototype with reviews and owner listings",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "node server/index.js",
+    "seed": "node server/seed.js",
+    "smoke": "node server/smoke-test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.2.2"
+  }
+}

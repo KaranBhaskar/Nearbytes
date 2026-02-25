@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nearby Bites</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,800&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="bg-shape bg-shape-a"></div>
+    <div class="bg-shape bg-shape-b"></div>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Prototype</p>
+          <h1>Nearby Bites</h1>
+        </div>
+        <div class="user-controls">
+          <p id="user-pill" class="user-pill">Guest</p>
+          <button id="open-auth" class="btn btn-outline">Sign Up / Log In</button>
+          <button id="logout-btn" class="btn btn-outline hidden">Logout</button>
+        </div>
+      </header>
+
+      <section class="location-bar card">
+        <div class="location-actions">
+          <button id="use-location" class="btn btn-primary">Use My Location</button>
+          <input id="location-query" type="text" placeholder="Enter city, address, or zip" />
+          <button id="search-location" class="btn btn-outline">Search</button>
+        </div>
+        <p id="location-status" class="muted">Set your location to discover nearby restaurants.</p>
+      </section>
+
+      <main class="layout">
+        <section class="feed card">
+          <div class="section-title-row">
+            <h2>Nearby Restaurants</h2>
+            <p id="feed-meta" class="muted">No location selected</p>
+          </div>
+          <div id="restaurant-list" class="restaurant-list"></div>
+          <div id="list-loader" class="list-loader"></div>
+          <div id="list-sentinel"></div>
+        </section>
+
+        <aside class="details card" id="details-panel">
+          <h2>Restaurant Details</h2>
+          <p class="muted">Select a restaurant to view menu, photos, and reviews.</p>
+        </aside>
+      </main>
+
+      <section id="owner-panel" class="owner card hidden">
+        <div class="section-title-row">
+          <h2>Owner Dashboard</h2>
+          <p class="muted">Create listings, upload photos, and add menu items.</p>
+        </div>
+
+        <div class="owner-grid">
+          <form id="create-restaurant-form" class="subcard">
+            <h3>Create Restaurant</h3>
+            <input name="name" placeholder="Restaurant name" required />
+            <input name="address" placeholder="Address" required />
+            <input name="lat" placeholder="Latitude" />
+            <input name="lng" placeholder="Longitude" />
+            <input name="phone" placeholder="Phone" />
+            <input name="website" placeholder="Website" />
+            <input name="cuisineTags" placeholder="Cuisine tags (comma separated)" />
+            <textarea name="description" placeholder="Description"></textarea>
+            <button type="submit" class="btn btn-primary">Create</button>
+          </form>
+
+          <div class="subcard">
+            <h3>Your Restaurants</h3>
+            <div id="owner-restaurants-list" class="owner-restaurants-list"></div>
+          </div>
+
+          <form id="upload-images-form" class="subcard" enctype="multipart/form-data">
+            <h3>Upload Restaurant Images</h3>
+            <select id="image-restaurant-select" name="restaurantId" required></select>
+            <input type="file" name="images" multiple accept="image/*" required />
+            <button type="submit" class="btn btn-primary">Upload Images</button>
+          </form>
+
+          <form id="menu-item-form" class="subcard" enctype="multipart/form-data">
+            <h3>Add Menu Item</h3>
+            <select id="menu-restaurant-select" name="restaurantId" required></select>
+            <input name="name" placeholder="Item name" required />
+            <textarea name="description" placeholder="Description"></textarea>
+            <input name="price" type="number" min="0" step="0.01" placeholder="Price" required />
+            <input type="file" name="image" accept="image/*" />
+            <button type="submit" class="btn btn-primary">Add Menu Item</button>
+          </form>
+        </div>
+      </section>
+    </div>
+
+    <dialog id="auth-dialog" class="auth-dialog">
+      <form id="login-form" class="auth-form">
+        <h3>Log In</h3>
+        <input name="email" type="email" placeholder="Email" required />
+        <input name="password" type="password" placeholder="Password" required />
+        <button type="submit" class="btn btn-primary">Log In</button>
+      </form>
+      <form id="signup-form" class="auth-form">
+        <h3>Sign Up</h3>
+        <input name="name" placeholder="Full name" required />
+        <input name="email" type="email" placeholder="Email" required />
+        <input name="password" type="password" placeholder="Password (min 8 chars)" required />
+        <select name="role" required>
+          <option value="customer">Customer</option>
+          <option value="owner">Restaurant Owner</option>
+        </select>
+        <button type="submit" class="btn btn-primary">Create Account</button>
+      </form>
+      <form method="dialog" class="dialog-close">
+        <button class="btn btn-outline">Close</button>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
