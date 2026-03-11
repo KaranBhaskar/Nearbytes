@@ -8,7 +8,8 @@ A working prototype web app for discovering nearby restaurants, viewing combined
 - Dark/light mode feature
 - Add Restaurants (Admin feature)
 - Add Menu Items (Admin feature)
-
+- Use My Location feature
+  
 ## Local Run
 1. Create env file:
 ```bash
