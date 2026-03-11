@@ -8,12 +8,14 @@
   </head>
   <body>
     <div class="app-shell">
-      <header class="topbar">
+      <header class="topbar card">
         <div>
           <h1>Nearby Bites</h1>
-          <p class="muted">Simple restaurant finder prototype</p>
+          <p class="muted">Discover local restaurants, menus, and reviews.</p>
         </div>
+
         <div class="user-controls">
+          <button id="theme-toggle" class="btn btn-outline" type="button">🌙 Dark Mode</button>
           <p id="user-pill" class="user-pill">Guest</p>
           <button id="open-auth" class="btn btn-outline">Sign Up / Log In</button>
           <button id="logout-btn" class="btn btn-outline hidden">Logout</button>
@@ -21,7 +23,7 @@
       </header>
 
       <section class="location-bar card">
-        <h2>Location</h2>
+        <h2>Find restaurants near you</h2>
         <div class="location-actions">
           <button id="use-location" class="btn btn-primary">Use My Location</button>
           <input id="location-query" type="text" placeholder="Enter city, address, or zip" />
@@ -99,6 +101,7 @@
         <input name="password" type="password" placeholder="Password" required />
         <button type="submit" class="btn btn-primary">Log In</button>
       </form>
+
       <form id="signup-form" class="auth-form">
         <h3>Sign Up</h3>
         <input name="name" placeholder="Full name" required />
@@ -110,6 +113,7 @@
         </select>
         <button type="submit" class="btn btn-primary">Create Account</button>
       </form>
+
       <form method="dialog" class="dialog-close">
         <button class="btn btn-outline">Close</button>
       </form>
