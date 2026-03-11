@@ -13,7 +13,7 @@ A working prototype web app for discovering nearby restaurants, viewing combined
 ## Local Run
 1. Create env file:
 ```bash
-cp .env.example .env
+cp .env.example .env 
 ```
 2. Install dependencies:
 ```bash
