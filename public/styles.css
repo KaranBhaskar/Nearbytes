@@ -74,6 +74,12 @@ p {
   padding: 24px 16px 40px;
 }
 
+.auth-page-shell {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+}
+
 .topbar {
   padding: 20px 24px;
   margin-bottom: 16px;
@@ -305,33 +311,15 @@ textarea {
   background: var(--surface);
 }
 
-.auth-dialog {
-  border: 1px solid var(--border);
-  padding: 18px;
-  width: min(760px, calc(100% - 20px));
-  border-radius: 18px;
-  background: var(--surface);
-  color: var(--text);
-}
-
-.auth-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.45);
-}
-
-.auth-dialog {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-
 .auth-form {
   display: grid;
   gap: 10px;
 }
 
-.dialog-close {
-  grid-column: span 2;
-  text-align: right;
+.auth-panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
 }
 
 .list-loader {
@@ -359,12 +347,8 @@ textarea {
 @media (max-width: 900px) {
   .layout,
   .owner-grid,
-  .auth-dialog {
+  .auth-panels {
     grid-template-columns: 1fr;
-  }
-
-  .dialog-close {
-    grid-column: span 1;
   }
 
   .location-actions {

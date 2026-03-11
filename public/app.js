@@ -49,9 +49,6 @@ const els = {
   openAuthBtn: document.getElementById('open-auth'),
   logoutBtn: document.getElementById('logout-btn'),
   themeToggleBtn: document.getElementById('theme-toggle'),
-  authDialog: document.getElementById('auth-dialog'),
-  loginForm: document.getElementById('login-form'),
-  signupForm: document.getElementById('signup-form'),
   useLocationBtn: document.getElementById('use-location'),
   searchLocationBtn: document.getElementById('search-location'),
   locationQuery: document.getElementById('location-query'),
@@ -127,6 +124,11 @@ function clearAuth() {
   state.user = null;
   localStorage.removeItem('token');
   localStorage.removeItem('user');
+}
+
+function navigateToAuthPage() {
+  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  window.location.assign(`/auth.html?returnTo=${encodeURIComponent(returnTo)}`);
 }
 
 function renderAuthUI() {
@@ -591,7 +593,7 @@ function initTheme() {
 
 function bindEvents() {
   els.openAuthBtn.addEventListener('click', () => {
-    els.authDialog.showModal();
+    navigateToAuthPage();
   });
 
   els.themeToggleBtn.addEventListener('click', () => {
@@ -612,62 +614,6 @@ function bindEvents() {
 
     if (state.selectedRestaurantId) {
       loadRestaurantDetails(state.selectedRestaurantId).catch((err) => showToast(err.message, true));
-    }
-  });
-
-  els.loginForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const formData = new FormData(els.loginForm);
-
-    try {
-      const data = await api('/api/auth/login', {
-        method: 'POST',
-        body: {
-          email: String(formData.get('email') || '').trim(),
-          password: String(formData.get('password') || ''),
-        },
-      });
-
-      saveAuth(data.token, data.user);
-      renderAuthUI();
-      els.loginForm.reset();
-      els.authDialog.close();
-      showToast('Logged in');
-
-      if (state.selectedRestaurantId) {
-        loadRestaurantDetails(state.selectedRestaurantId).catch((err) => showToast(err.message, true));
-      }
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-
-  els.signupForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const formData = new FormData(els.signupForm);
-
-    try {
-      const data = await api('/api/auth/signup', {
-        method: 'POST',
-        body: {
-          name: String(formData.get('name') || '').trim(),
-          email: String(formData.get('email') || '').trim(),
-          password: String(formData.get('password') || ''),
-          role: String(formData.get('role') || 'customer'),
-        },
-      });
-
-      saveAuth(data.token, data.user);
-      renderAuthUI();
-      els.signupForm.reset();
-      els.authDialog.close();
-      showToast('Account created');
-
-      if (state.selectedRestaurantId) {
-        loadRestaurantDetails(state.selectedRestaurantId).catch((err) => showToast(err.message, true));
-      }
-    } catch (err) {
-      showToast(err.message, true);
     }
   });
 

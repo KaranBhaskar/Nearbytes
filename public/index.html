@@ -94,31 +94,6 @@
       </section>
     </div>
 
-    <dialog id="auth-dialog" class="auth-dialog">
-      <form id="login-form" class="auth-form">
-        <h3>Log In</h3>
-        <input name="email" type="email" placeholder="Email" required />
-        <input name="password" type="password" placeholder="Password" required />
-        <button type="submit" class="btn btn-primary">Log In</button>
-      </form>
-
-      <form id="signup-form" class="auth-form">
-        <h3>Sign Up</h3>
-        <input name="name" placeholder="Full name" required />
-        <input name="email" type="email" placeholder="Email" required />
-        <input name="password" type="password" placeholder="Password (min 8 chars)" required />
-        <select name="role" required>
-          <option value="customer">Customer</option>
-          <option value="owner">Restaurant Owner</option>
-        </select>
-        <button type="submit" class="btn btn-primary">Create Account</button>
-      </form>
-
-      <form method="dialog" class="dialog-close">
-        <button class="btn btn-outline">Close</button>
-      </form>
-    </dialog>
-
     <div id="toast" class="toast hidden"></div>
 
     <script src="/app.js"></script>
