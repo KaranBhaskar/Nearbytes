@@ -2,25 +2,12 @@
 
 A working prototype web app for discovering nearby restaurants, viewing combined ratings (Google + app reviews), and role-based actions for customers and restaurant owners.
 
-## Stack
-- Backend: Node.js, Express, SQLite (`better-sqlite3`)
-- Frontend: Vanilla HTML/CSS/JS SPA
-- Auth: JWT token auth
-- Uploads: Multer (local disk uploads)
-
 ## Features Implemented
-- Location-based nearby restaurant discovery
-- Infinite scroll pagination (auto-load as you reach the end)
-- Guest browsing without signup/login
-- Customer signup/login and review create/update/delete
-- Owner signup/login
-- Owner restaurant listing creation
-- Owner photo uploads and menu-item creation
-- Restaurant details page with:
-  - Google rating metadata
-  - App rating metadata
-  - Weighted combined rating
-- Optional Google Places sync on nearby query (if API key is set)
+- Simple UI for demo
+- User Login/Registration Features
+- Dark/light mode feature
+- Add Restaurants (Admin feature)
+- Add Menu Items (Admin feature)
 
 ## Local Run
 1. Create env file:
@@ -59,6 +46,12 @@ GOOGLE_PLACES_API_KEY=your_key_here
 GOOGLE_NEARBY_RADIUS_METERS=3000
 ```
 Without this key, the app still works with local seeded + owner-created restaurants.
+
+## Stack
+- Backend: Node.js, Express, SQLite (`better-sqlite3`)
+- Frontend: Vanilla HTML/CSS/JS SPA
+- Auth: JWT token auth
+- Uploads: Multer (local disk uploads)
 
 ## Project Structure
 - `server/app.js`: Express app and API routes
