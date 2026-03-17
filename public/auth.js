@@ -7,6 +7,12 @@ const els = {
   toast: document.getElementById('toast'),
 };
 
+const SAVED_LOGIN_EMAIL_KEY = 'savedLoginEmail';
+const SAVED_LOGIN_PASSWORD_KEY = 'savedLoginPassword';
+const SAVED_SIGNUP_NAME_KEY = 'savedSignupName';
+const SAVED_SIGNUP_EMAIL_KEY = 'savedSignupEmail';
+const SAVED_SIGNUP_PASSWORD_KEY = 'savedSignupPassword';
+
 function showToast(message, isError = false) {
   els.toast.textContent = message;
   els.toast.classList.remove('hidden');
@@ -63,6 +69,31 @@ function saveAuth(token, user) {
   localStorage.setItem('user', JSON.stringify(user));
 }
 
+function saveLoginCredentials(email, password) {
+  localStorage.setItem(SAVED_LOGIN_EMAIL_KEY, email);
+  localStorage.setItem(SAVED_LOGIN_PASSWORD_KEY, password);
+}
+
+function saveSignupCredentials(name, email, password) {
+  localStorage.setItem(SAVED_SIGNUP_NAME_KEY, name);
+  localStorage.setItem(SAVED_SIGNUP_EMAIL_KEY, email);
+  localStorage.setItem(SAVED_SIGNUP_PASSWORD_KEY, password);
+}
+
+function prefillSavedCredentials() {
+  const loginEmailInput = els.loginForm.querySelector('input[name="email"]');
+  const loginPasswordInput = els.loginForm.querySelector('input[name="password"]');
+  const signupNameInput = els.signupForm.querySelector('input[name="name"]');
+  const signupEmailInput = els.signupForm.querySelector('input[name="email"]');
+  const signupPasswordInput = els.signupForm.querySelector('input[name="password"]');
+
+  if (loginEmailInput) loginEmailInput.value = localStorage.getItem(SAVED_LOGIN_EMAIL_KEY) || '';
+  if (loginPasswordInput) loginPasswordInput.value = localStorage.getItem(SAVED_LOGIN_PASSWORD_KEY) || '';
+  if (signupNameInput) signupNameInput.value = localStorage.getItem(SAVED_SIGNUP_NAME_KEY) || '';
+  if (signupEmailInput) signupEmailInput.value = localStorage.getItem(SAVED_SIGNUP_EMAIL_KEY) || '';
+  if (signupPasswordInput) signupPasswordInput.value = localStorage.getItem(SAVED_SIGNUP_PASSWORD_KEY) || '';
+}
+
 function applyTheme(theme) {
   const isDark = theme === 'dark';
   document.body.classList.toggle('dark', isDark);
@@ -94,17 +125,20 @@ function bindEvents(returnTo) {
   els.loginForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const formData = new FormData(els.loginForm);
+    const email = String(formData.get('email') || '').trim();
+    const password = String(formData.get('password') || '');
 
     try {
       const data = await api('/api/auth/login', {
         method: 'POST',
         body: {
-          email: String(formData.get('email') || '').trim(),
-          password: String(formData.get('password') || ''),
+          email,
+          password,
         },
       });
 
       saveAuth(data.token, data.user);
+      saveLoginCredentials(email, password);
       showToast('Logged in, redirecting...');
       window.setTimeout(() => {
         window.location.assign(returnTo);
@@ -117,19 +151,24 @@ function bindEvents(returnTo) {
   els.signupForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const formData = new FormData(els.signupForm);
+    const name = String(formData.get('name') || '').trim();
+    const email = String(formData.get('email') || '').trim();
+    const password = String(formData.get('password') || '');
 
     try {
       const data = await api('/api/auth/signup', {
         method: 'POST',
         body: {
-          name: String(formData.get('name') || '').trim(),
-          email: String(formData.get('email') || '').trim(),
-          password: String(formData.get('password') || ''),
+          name,
+          email,
+          password,
           role: String(formData.get('role') || 'customer'),
         },
       });
 
       saveAuth(data.token, data.user);
+      saveSignupCredentials(name, email, password);
+      saveLoginCredentials(email, password);
       showToast('Account created, redirecting...');
       window.setTimeout(() => {
         window.location.assign(returnTo);
@@ -144,6 +183,7 @@ function init() {
   const returnTo = getReturnTo();
   els.backLink.href = returnTo;
   els.returnTarget.textContent = `After sign in, you will return to: ${returnTo}`;
+  prefillSavedCredentials();
   initTheme();
   bindEvents(returnTo);
 }
