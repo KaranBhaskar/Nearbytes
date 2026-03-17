@@ -34,9 +34,9 @@ function seed() {
 
     const insertRestaurant = db.prepare(`
       INSERT INTO restaurants(
-        owner_id, name, address, lat, lng, description, phone, website, cuisine_tags,
+        owner_id, name, address, lat, lng, description, phone, website, cuisine_tags, dietary_tags,
         google_place_id, google_rating, google_rating_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const r1 = insertRestaurant.run(
@@ -49,6 +49,7 @@ function seed() {
       '(415) 555-0101',
       'https://example.com/golden-spoon',
       JSON.stringify(['Californian', 'Brunch']),
+      JSON.stringify(['gluten-free']),
       'seed_place_1',
       4.3,
       128
@@ -64,6 +65,7 @@ function seed() {
       '(415) 555-0133',
       null,
       JSON.stringify(['Asian', 'Noodles']),
+      JSON.stringify(['halal']),
       'seed_place_2',
       4.1,
       342
@@ -79,6 +81,7 @@ function seed() {
       '(415) 555-0199',
       null,
       JSON.stringify(['Mexican', 'Casual']),
+      JSON.stringify(['vegan', 'gluten-free']),
       'seed_place_3',
       4.5,
       229

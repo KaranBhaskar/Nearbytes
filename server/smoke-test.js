@@ -16,6 +16,17 @@ async function run() {
   assert(nearby.body.items.length > 0, 'nearby.items should contain at least one restaurant');
   const restaurantId = nearby.body.items[0].id;
 
+  const filteredNearby = await request(app)
+    .get('/api/restaurants/nearby')
+    .query({ lat: 37.7937, lng: -122.395, dietary: 'halal' })
+    .expect(200);
+
+  assert(Array.isArray(filteredNearby.body.items), 'filtered nearby.items should be an array');
+  assert(
+    filteredNearby.body.items.every((item) => Array.isArray(item.dietaryTags) && item.dietaryTags.includes('halal')),
+    'filtered results should match requested dietary tag'
+  );
+
   await request(app)
     .post(`/api/restaurants/${restaurantId}/reviews`)
     .send({ rating: 5, comment: 'Guest review should fail' })
@@ -52,6 +63,7 @@ async function run() {
       lat: 37.79,
       lng: -122.40,
       cuisineTags: 'Test,Prototype',
+      dietaryTags: 'vegan,gluten-free',
     })
     .expect(201);
 
@@ -87,6 +99,7 @@ async function run() {
       lng: -122.4,
       description: 'Updated by owner in smoke test',
       cuisineTags: 'Test,Prototype,Updated',
+      dietaryTags: 'vegan',
     })
     .expect(200);
 

@@ -84,6 +84,7 @@ function normalizeRestaurantRow(row) {
     phone: row.phone,
     website: row.website,
     cuisineTags: parseCuisineTags(row.cuisine_tags),
+    dietaryTags: parseCuisineTags(row.dietary_tags),
     googlePlaceId: row.google_place_id,
     coverImage: row.cover_image || null,
     googleRating: googleAvg,
@@ -131,6 +132,7 @@ function parseRestaurantPayload(body, existing = null) {
   const rawLat = body.lat;
   const rawLng = body.lng;
   const rawCuisineTags = body.cuisineTags;
+  const rawDietaryTags = body.dietaryTags;
 
   const nextName = rawName == null ? existing && existing.name : String(rawName).trim();
   const nextAddress = rawAddress == null ? existing && existing.address : String(rawAddress).trim();
@@ -153,6 +155,14 @@ function parseRestaurantPayload(body, existing = null) {
         .split(',')
         .map((item) => item.trim())
         .filter(Boolean);
+  const dietarySource =
+    rawDietaryTags == null && existing ? parseCuisineTags(existing.dietary_tags) : rawDietaryTags;
+  const dietaryTags = Array.isArray(dietarySource)
+    ? dietarySource.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
+    : String(dietarySource || '')
+        .split(',')
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean);
 
   return {
     values: {
@@ -170,6 +180,7 @@ function parseRestaurantPayload(body, existing = null) {
       website:
         rawWebsite == null ? (existing ? existing.website : null) : String(rawWebsite).trim() || null,
       cuisineTags,
+      dietaryTags,
     },
   };
 }
@@ -187,6 +198,7 @@ function updateRestaurantRecord(restaurantId, values) {
       phone = ?,
       website = ?,
       cuisine_tags = ?,
+      dietary_tags = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `
@@ -199,6 +211,7 @@ function updateRestaurantRecord(restaurantId, values) {
     values.phone,
     values.website,
     JSON.stringify(values.cuisineTags),
+    JSON.stringify(values.dietaryTags),
     restaurantId
   );
 }
@@ -274,6 +287,10 @@ app.get('/api/restaurants/nearby', async (req, res) => {
 
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
   const offset = decodeCursor(req.query.cursor);
+  const dietaryFilters = String(req.query.dietary || '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
 
   try {
     await syncGoogleNearby(db, lat, lng);
@@ -312,6 +329,9 @@ app.get('/api/restaurants/nearby', async (req, res) => {
         distanceKm: haversineKm(lat, lng, normalized.lat, normalized.lng),
       };
     })
+    .filter((restaurant) =>
+      dietaryFilters.every((tag) => restaurant.dietaryTags.map((item) => item.toLowerCase()).includes(tag))
+    )
     .sort((a, b) => a.distanceKm - b.distanceKm);
 
   const items = withDistance.slice(offset, offset + limit);
@@ -555,9 +575,9 @@ app.post('/api/owner/restaurants', requireAuth, requireRole('owner'), (req, res)
     .prepare(
       `
       INSERT INTO restaurants(
-        owner_id, name, address, lat, lng, description, phone, website, cuisine_tags,
+        owner_id, name, address, lat, lng, description, phone, website, cuisine_tags, dietary_tags,
         google_place_id, google_rating, google_rating_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
     )
     .run(
@@ -570,6 +590,7 @@ app.post('/api/owner/restaurants', requireAuth, requireRole('owner'), (req, res)
       values.phone,
       values.website,
       JSON.stringify(values.cuisineTags),
+      JSON.stringify(values.dietaryTags),
       null,
       null,
       0

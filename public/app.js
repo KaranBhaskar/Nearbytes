@@ -10,6 +10,7 @@ const state = {
   selectedRestaurantId: null,
   ownerRestaurants: [],
   selectedOwnerRestaurantId: null,
+  dietaryFilters: [],
 };
 
 const demoRestaurants = [
@@ -20,6 +21,7 @@ const demoRestaurants = [
     description: "Fresh vegetarian meals made with local ingredients.",
     rating: 4.6,
     cuisineTags: ["Vegetarian", "Healthy"],
+    dietaryTags: ["vegan", "gluten-free"],
     image:
       "https://images.unsplash.com/photo-1546069901-ba9599a7e63c"
   },
@@ -30,6 +32,7 @@ const demoRestaurants = [
     description: "Authentic Indian cuisine with rich spices and flavors.",
     rating: 4.4,
     cuisineTags: ["Indian", "Curry"],
+    dietaryTags: ["halal"],
     image:
       "https://images.unsplash.com/photo-1601050690597-df0568f70950"
   },
@@ -40,6 +43,7 @@ const demoRestaurants = [
     description: "Traditional Italian pasta, pizza, and wine.",
     rating: 4.7,
     cuisineTags: ["Italian", "Pasta", "Pizza"],
+    dietaryTags: [],
     image:
       "https://images.unsplash.com/photo-1600891964599-f61ba0e24092"
   }
@@ -52,6 +56,7 @@ const els = {
   themeToggleBtn: document.getElementById('theme-toggle'),
   useLocationBtn: document.getElementById('use-location'),
   searchLocationBtn: document.getElementById('search-location'),
+  clearFiltersBtn: document.getElementById('clear-filters'),
   locationQuery: document.getElementById('location-query'),
   locationStatus: document.getElementById('location-status'),
   feedMeta: document.getElementById('feed-meta'),
@@ -69,6 +74,7 @@ const els = {
   editRestaurantSelect: document.getElementById('edit-restaurant-select'),
   imageRestaurantSelect: document.getElementById('image-restaurant-select'),
   menuRestaurantSelect: document.getElementById('menu-restaurant-select'),
+  dietaryFilterInputs: Array.from(document.querySelectorAll('input[name="dietary-filter"]')),
 };
 
 let observer;
@@ -158,6 +164,10 @@ function ratingText(value, count) {
   return `${Number(value).toFixed(1)} (${count})`;
 }
 
+function activeDietaryFilterText() {
+  return state.dietaryFilters.length ? ` | Filters: ${state.dietaryFilters.join(', ')}` : '';
+}
+
 function renderRestaurantCard(restaurant) {
   const card = document.createElement('article');
   card.className = 'restaurant-card';
@@ -176,6 +186,11 @@ function renderRestaurantCard(restaurant) {
       <p class="muted">${restaurant.address}</p>
       <div class="metrics">
         <span class="metric-pill">${restaurant.distanceKm.toFixed(2)} km away</span>
+        ${
+          restaurant.dietaryTags && restaurant.dietaryTags.length
+            ? restaurant.dietaryTags.map((tag) => `<span class="metric-pill">${tag}</span>`).join('')
+            : ''
+        }
         <span class="metric-pill">Combined: ${ratingText(
           restaurant.combinedRating,
           restaurant.combinedRatingCount
@@ -293,6 +308,10 @@ async function loadMoreRestaurants() {
     limit: '20',
   });
 
+  if (state.dietaryFilters.length) {
+    params.set('dietary', state.dietaryFilters.join(','));
+  }
+
   if (state.cursor) {
     params.set('cursor', state.cursor);
   }
@@ -303,22 +322,26 @@ async function loadMoreRestaurants() {
     let items = data.items || [];
 
     if (items.length === 0 && state.restaurants.length === 0) {
-      items = demoRestaurants.map((restaurant, index) => ({
-        ...restaurant,
-        coverImage: restaurant.image,
-        distanceKm: 0.8 + index * 0.6,
-        combinedRating: restaurant.rating,
-        combinedRatingCount: 24 + index * 7,
-        googleRating: restaurant.rating,
-        googleRatingCount: 18 + index * 5,
-        appRating: restaurant.rating,
-        appRatingCount: 10 + index * 3,
-      }));
+      items = demoRestaurants
+        .filter((restaurant) =>
+          state.dietaryFilters.every((tag) => (restaurant.dietaryTags || []).includes(tag))
+        )
+        .map((restaurant, index) => ({
+          ...restaurant,
+          coverImage: restaurant.image,
+          distanceKm: 0.8 + index * 0.6,
+          combinedRating: restaurant.rating,
+          combinedRatingCount: 24 + index * 7,
+          googleRating: restaurant.rating,
+          googleRatingCount: 18 + index * 5,
+          appRating: restaurant.rating,
+          appRatingCount: 10 + index * 3,
+        }));
 
       state.hasMore = false;
       state.cursor = null;
       state.restaurants = items;
-      els.feedMeta.textContent = `${items.length} demo restaurants near ${state.locationLabel || 'selected area'}`;
+      els.feedMeta.textContent = `${items.length} demo restaurants near ${state.locationLabel || 'selected area'}${activeDietaryFilterText()}`;
       renderRestaurantList();
       return;
     }
@@ -326,7 +349,7 @@ async function loadMoreRestaurants() {
     state.restaurants.push(...items);
     state.cursor = data.nextCursor || null;
     state.hasMore = Boolean(data.hasMore);
-    els.feedMeta.textContent = `${data.total || state.restaurants.length} restaurants found near ${state.locationLabel || 'selected area'}`;
+    els.feedMeta.textContent = `${data.total || state.restaurants.length} restaurants found near ${state.locationLabel || 'selected area'}${activeDietaryFilterText()}`;
     renderRestaurantList();
   } catch (err) {
     showToast(err.message, true);
@@ -379,6 +402,11 @@ function renderDemoRestaurantDetails(restaurant) {
     <p>${restaurant.description}</p>
 
     <div class="metrics">
+      ${
+        restaurant.dietaryTags && restaurant.dietaryTags.length
+          ? restaurant.dietaryTags.map((tag) => `<span class="metric-pill">${tag}</span>`).join('')
+          : ''
+      }
       <span class="metric-pill">Combined: ${restaurant.combinedRating.toFixed(1)} (${restaurant.combinedRatingCount})</span>
       <span class="metric-pill">Google: ${restaurant.googleRating.toFixed(1)} (${restaurant.googleRatingCount})</span>
       <span class="metric-pill">App: ${restaurant.appRating.toFixed(1)} (${restaurant.appRatingCount})</span>
@@ -429,6 +457,11 @@ async function loadRestaurantDetails(restaurantId) {
     <p>${restaurant.description || 'No description provided yet.'}</p>
 
     <div class="metrics">
+      ${
+        restaurant.dietaryTags && restaurant.dietaryTags.length
+          ? restaurant.dietaryTags.map((tag) => `<span class="metric-pill">${tag}</span>`).join('')
+          : ''
+      }
       <span class="metric-pill">Combined: ${ratingText(
         restaurant.combinedRating,
         restaurant.combinedRatingCount
@@ -608,6 +641,7 @@ function populateOwnerRestaurantForm(restaurantId) {
   els.editRestaurantForm.elements.phone.value = restaurant.phone || '';
   els.editRestaurantForm.elements.website.value = restaurant.website || '';
   els.editRestaurantForm.elements.cuisineTags.value = toCuisineTagString(restaurant.cuisineTags);
+  els.editRestaurantForm.elements.dietaryTags.value = toCuisineTagString(restaurant.dietaryTags);
   els.editRestaurantForm.elements.description.value = restaurant.description || '';
 }
 
@@ -709,6 +743,25 @@ function bindEvents() {
     }
   });
 
+  els.dietaryFilterInputs.forEach((input) => {
+    input.addEventListener('change', async () => {
+      state.dietaryFilters = els.dietaryFilterInputs.filter((item) => item.checked).map((item) => item.value);
+      if (state.location) {
+        await resetAndReloadRestaurants();
+      }
+    });
+  });
+
+  els.clearFiltersBtn.addEventListener('click', async () => {
+    els.dietaryFilterInputs.forEach((input) => {
+      input.checked = false;
+    });
+    state.dietaryFilters = [];
+    if (state.location) {
+      await resetAndReloadRestaurants();
+    }
+  });
+
   els.createRestaurantForm.addEventListener('submit', async (event) => {
     event.preventDefault();
 
@@ -740,6 +793,7 @@ function bindEvents() {
           website: String(formData.get('website') || '').trim(),
           description: String(formData.get('description') || '').trim(),
           cuisineTags: String(formData.get('cuisineTags') || '').trim(),
+          dietaryTags: String(formData.get('dietaryTags') || '').trim(),
         },
       });
 
@@ -875,6 +929,7 @@ function bindEvents() {
             website: String(formData.get('website') || '').trim(),
             description: String(formData.get('description') || '').trim(),
             cuisineTags: String(formData.get('cuisineTags') || '').trim(),
+            dietaryTags: String(formData.get('dietaryTags') || '').trim(),
           },
         });
 

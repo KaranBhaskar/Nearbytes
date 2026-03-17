@@ -123,6 +123,24 @@ p {
   margin: 14px 0 8px;
 }
 
+.dietary-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.dietary-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dietary-filters input {
+  width: auto;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 1.05fr 0.95fr;
