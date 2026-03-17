@@ -147,7 +147,7 @@ p {
   margin: 16px 0 20px;
   display: flex;
   flex-direction: column;
-  gap: 6px; 
+  gap: 6px;
 }
 
 .restaurant-card {
