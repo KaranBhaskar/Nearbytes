@@ -4,6 +4,9 @@
   "description": "Location-based restaurant discovery prototype with reviews and owner listings",
   "main": "server/index.js",
   "type": "commonjs",
+  "engines": {
+    "node": "^20 || ^22"
+  },
   "scripts": {
     "dev": "node server/index.js",
     "seed": "node server/seed.js",

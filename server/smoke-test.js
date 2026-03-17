@@ -77,6 +77,19 @@ async function run() {
   assert(Array.isArray(ownerList.body.restaurants), 'owner list should be array');
   assert(ownerList.body.restaurants.length >= 1, 'owner list should include at least one restaurant');
 
+  await request(app)
+    .put(`/api/owner/restaurants/${ownerRestaurantId}`)
+    .set('Authorization', `Bearer ${ownerLogin.body.token}`)
+    .send({
+      name: 'Smoke Owner Spot Updated',
+      address: '123 Test Lane, San Francisco, CA',
+      lat: 37.79,
+      lng: -122.4,
+      description: 'Updated by owner in smoke test',
+      cuisineTags: 'Test,Prototype,Updated',
+    })
+    .expect(200);
+
   // eslint-disable-next-line no-console
   console.log('Smoke test passed. Key flows are operational.');
 }

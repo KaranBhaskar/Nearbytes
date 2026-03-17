@@ -29,7 +29,6 @@ function seed() {
       customerPassword,
       'customer'
     );
-
     const ownerId = ownerInfo.lastInsertRowid;
     const customerId = customerInfo.lastInsertRowid;
 

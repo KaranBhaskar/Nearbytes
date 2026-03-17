@@ -247,6 +247,11 @@ p {
   background: var(--surface);
   padding: 12px;
   border-radius: 12px;
+  cursor: pointer;
+}
+
+.owner-row:hover {
+  border-color: var(--primary);
 }
 
 input,

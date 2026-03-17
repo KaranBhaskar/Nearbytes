@@ -122,6 +122,87 @@ function getRestaurantWithAggregates(restaurantId) {
   return row ? normalizeRestaurantRow(row) : null;
 }
 
+function parseRestaurantPayload(body, existing = null) {
+  const rawName = body.name;
+  const rawAddress = body.address;
+  const rawDescription = body.description;
+  const rawPhone = body.phone;
+  const rawWebsite = body.website;
+  const rawLat = body.lat;
+  const rawLng = body.lng;
+  const rawCuisineTags = body.cuisineTags;
+
+  const nextName = rawName == null ? existing && existing.name : String(rawName).trim();
+  const nextAddress = rawAddress == null ? existing && existing.address : String(rawAddress).trim();
+  const nextLat = rawLat == null ? existing && existing.lat : Number(rawLat);
+  const nextLng = rawLng == null ? existing && existing.lng : Number(rawLng);
+
+  if (!nextName || !nextAddress || nextLat == null || nextLng == null) {
+    return { error: 'name, address, lat and lng are required' };
+  }
+
+  if (!Number.isFinite(nextLat) || !Number.isFinite(nextLng)) {
+    return { error: 'lat and lng must be valid numbers' };
+  }
+
+  const tagsSource =
+    rawCuisineTags == null && existing ? parseCuisineTags(existing.cuisine_tags) : rawCuisineTags;
+  const cuisineTags = Array.isArray(tagsSource)
+    ? tagsSource.map((item) => String(item).trim()).filter(Boolean)
+    : String(tagsSource || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+  return {
+    values: {
+      name: nextName,
+      address: nextAddress,
+      lat: nextLat,
+      lng: nextLng,
+      description:
+        rawDescription == null
+          ? existing
+            ? existing.description
+            : null
+          : String(rawDescription).trim() || null,
+      phone: rawPhone == null ? (existing ? existing.phone : null) : String(rawPhone).trim() || null,
+      website:
+        rawWebsite == null ? (existing ? existing.website : null) : String(rawWebsite).trim() || null,
+      cuisineTags,
+    },
+  };
+}
+
+function updateRestaurantRecord(restaurantId, values) {
+  db.prepare(
+    `
+    UPDATE restaurants
+    SET
+      name = ?,
+      address = ?,
+      lat = ?,
+      lng = ?,
+      description = ?,
+      phone = ?,
+      website = ?,
+      cuisine_tags = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `
+  ).run(
+    values.name,
+    values.address,
+    values.lat,
+    values.lng,
+    values.description,
+    values.phone,
+    values.website,
+    JSON.stringify(values.cuisineTags),
+    restaurantId
+  );
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
@@ -441,10 +522,7 @@ app.get('/api/owner/restaurants', requireAuth, requireRole('owner'), (req, res) 
     .prepare(
       `
       SELECT
-        r.id,
-        r.name,
-        r.address,
-        r.created_at AS createdAt,
+        r.*,
         COUNT(DISTINCT m.id) AS menuItemCount,
         COUNT(DISTINCT i.id) AS imageCount
       FROM restaurants r
@@ -455,30 +533,23 @@ app.get('/api/owner/restaurants', requireAuth, requireRole('owner'), (req, res) 
       ORDER BY r.created_at DESC
     `
     )
-    .all(req.user.id);
+    .all(req.user.id)
+    .map((row) => ({
+      ...normalizeRestaurantRow(row),
+      menuItemCount: Number(row.menuItemCount || 0),
+      imageCount: Number(row.imageCount || 0),
+    }));
 
   return res.json({ restaurants });
 });
 
 app.post('/api/owner/restaurants', requireAuth, requireRole('owner'), (req, res) => {
-  const { name, address, lat, lng, description, phone, website, cuisineTags } = req.body;
-
-  if (!name || !address || lat == null || lng == null) {
-    return res.status(400).json({ error: 'name, address, lat and lng are required' });
+  const parsed = parseRestaurantPayload(req.body);
+  if (parsed.error) {
+    return res.status(400).json({ error: parsed.error });
   }
 
-  const parsedLat = Number(lat);
-  const parsedLng = Number(lng);
-  if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) {
-    return res.status(400).json({ error: 'lat and lng must be numbers' });
-  }
-
-  const tags = Array.isArray(cuisineTags)
-    ? cuisineTags
-    : String(cuisineTags || '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
+  const { values } = parsed;
 
   const info = db
     .prepare(
@@ -491,14 +562,14 @@ app.post('/api/owner/restaurants', requireAuth, requireRole('owner'), (req, res)
     )
     .run(
       req.user.id,
-      String(name).trim(),
-      String(address).trim(),
-      parsedLat,
-      parsedLng,
-      description ? String(description).trim() : null,
-      phone ? String(phone).trim() : null,
-      website ? String(website).trim() : null,
-      JSON.stringify(tags),
+      values.name,
+      values.address,
+      values.lat,
+      values.lng,
+      values.description,
+      values.phone,
+      values.website,
+      JSON.stringify(values.cuisineTags),
       null,
       null,
       0
@@ -522,47 +593,12 @@ app.put('/api/owner/restaurants/:id', requireAuth, requireRole('owner'), (req, r
     return res.status(404).json({ error: 'owned restaurant not found' });
   }
 
-  const { name, address, lat, lng, description, phone, website, cuisineTags } = req.body;
-  const nextLat = lat == null ? existing.lat : Number(lat);
-  const nextLng = lng == null ? existing.lng : Number(lng);
-
-  if (!Number.isFinite(nextLat) || !Number.isFinite(nextLng)) {
-    return res.status(400).json({ error: 'lat and lng must be valid numbers' });
+  const parsed = parseRestaurantPayload(req.body, existing);
+  if (parsed.error) {
+    return res.status(400).json({ error: parsed.error });
   }
 
-  const tags = Array.isArray(cuisineTags)
-    ? cuisineTags
-    : String(cuisineTags || '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
-
-  db.prepare(
-    `
-    UPDATE restaurants
-    SET
-      name = ?,
-      address = ?,
-      lat = ?,
-      lng = ?,
-      description = ?,
-      phone = ?,
-      website = ?,
-      cuisine_tags = ?,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `
-  ).run(
-    name ? String(name).trim() : existing.name,
-    address ? String(address).trim() : existing.address,
-    nextLat,
-    nextLng,
-    description == null ? existing.description : String(description).trim(),
-    phone == null ? existing.phone : String(phone).trim(),
-    website == null ? existing.website : String(website).trim(),
-    JSON.stringify(tags.length ? tags : parseCuisineTags(existing.cuisine_tags)),
-    restaurantId
-  );
+  updateRestaurantRecord(restaurantId, parsed.values);
 
   const restaurant = getRestaurantWithAggregates(restaurantId);
   return res.json({ restaurant });

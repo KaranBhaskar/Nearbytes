@@ -9,6 +9,7 @@ const state = {
   restaurants: [],
   selectedRestaurantId: null,
   ownerRestaurants: [],
+  selectedOwnerRestaurantId: null,
 };
 
 const demoRestaurants = [
@@ -62,8 +63,10 @@ const els = {
   ownerPanel: document.getElementById('owner-panel'),
   ownerRestaurantsList: document.getElementById('owner-restaurants-list'),
   createRestaurantForm: document.getElementById('create-restaurant-form'),
+  editRestaurantForm: document.getElementById('edit-restaurant-form'),
   uploadImagesForm: document.getElementById('upload-images-form'),
   menuItemForm: document.getElementById('menu-item-form'),
+  editRestaurantSelect: document.getElementById('edit-restaurant-select'),
   imageRestaurantSelect: document.getElementById('image-restaurant-select'),
   menuRestaurantSelect: document.getElementById('menu-restaurant-select'),
 };
@@ -550,7 +553,7 @@ async function loadOwnerRestaurants() {
     ? state.ownerRestaurants
         .map(
           (restaurant) => `
-          <div class="owner-row">
+          <div class="owner-row" data-restaurant-id="${restaurant.id}">
             <strong>${restaurant.name}</strong>
             <p class="muted">${restaurant.address}</p>
             <p class="muted">${restaurant.imageCount} images, ${restaurant.menuItemCount} menu items</p>
@@ -565,8 +568,47 @@ async function loadOwnerRestaurants() {
     .join('');
 
   const placeholder = '<option value="">Select restaurant</option>';
+  els.editRestaurantSelect.innerHTML = placeholder + options;
   els.imageRestaurantSelect.innerHTML = placeholder + options;
   els.menuRestaurantSelect.innerHTML = placeholder + options;
+
+  const selectedId =
+    state.selectedOwnerRestaurantId && state.ownerRestaurants.some((item) => item.id === state.selectedOwnerRestaurantId)
+      ? state.selectedOwnerRestaurantId
+      : state.ownerRestaurants[0] && state.ownerRestaurants[0].id;
+
+  if (selectedId) {
+    populateOwnerRestaurantForm(selectedId);
+  } else if (els.editRestaurantForm) {
+    els.editRestaurantForm.reset();
+  }
+
+  els.ownerRestaurantsList.querySelectorAll('[data-restaurant-id]').forEach((row) => {
+    row.addEventListener('click', () => {
+      populateOwnerRestaurantForm(Number(row.dataset.restaurantId));
+    });
+  });
+}
+
+function toCuisineTagString(cuisineTags) {
+  return Array.isArray(cuisineTags) ? cuisineTags.join(', ') : '';
+}
+
+function populateOwnerRestaurantForm(restaurantId) {
+  const restaurant = state.ownerRestaurants.find((item) => item.id === Number(restaurantId));
+  if (!restaurant || !els.editRestaurantForm) return;
+
+  state.selectedOwnerRestaurantId = restaurant.id;
+  els.editRestaurantSelect.value = String(restaurant.id);
+  els.editRestaurantForm.elements.restaurantId.value = String(restaurant.id);
+  els.editRestaurantForm.elements.name.value = restaurant.name || '';
+  els.editRestaurantForm.elements.address.value = restaurant.address || '';
+  els.editRestaurantForm.elements.lat.value = restaurant.lat ?? '';
+  els.editRestaurantForm.elements.lng.value = restaurant.lng ?? '';
+  els.editRestaurantForm.elements.phone.value = restaurant.phone || '';
+  els.editRestaurantForm.elements.website.value = restaurant.website || '';
+  els.editRestaurantForm.elements.cuisineTags.value = toCuisineTagString(restaurant.cuisineTags);
+  els.editRestaurantForm.elements.description.value = restaurant.description || '';
 }
 
 function applyTheme(theme) {
@@ -795,6 +837,63 @@ function bindEvents() {
       showToast(err.message, true);
     }
   });
+
+  if (els.editRestaurantSelect) {
+    els.editRestaurantSelect.addEventListener('change', (event) => {
+      const restaurantId = Number(event.target.value);
+      if (restaurantId) {
+        populateOwnerRestaurantForm(restaurantId);
+      }
+    });
+  }
+
+  if (els.editRestaurantForm) {
+    els.editRestaurantForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+
+      if (!state.user || state.user.role !== 'owner') {
+        showToast('Owner login required', true);
+        return;
+      }
+
+      const formData = new FormData(els.editRestaurantForm);
+      const restaurantId = Number(formData.get('restaurantId'));
+      if (!restaurantId) {
+        showToast('Choose a restaurant', true);
+        return;
+      }
+
+      try {
+        await api(`/api/owner/restaurants/${restaurantId}`, {
+          method: 'PUT',
+          body: {
+            name: String(formData.get('name') || '').trim(),
+            address: String(formData.get('address') || '').trim(),
+            lat: Number(formData.get('lat')),
+            lng: Number(formData.get('lng')),
+            phone: String(formData.get('phone') || '').trim(),
+            website: String(formData.get('website') || '').trim(),
+            description: String(formData.get('description') || '').trim(),
+            cuisineTags: String(formData.get('cuisineTags') || '').trim(),
+          },
+        });
+
+        await loadOwnerRestaurants();
+
+        if (state.location) {
+          await resetAndReloadRestaurants();
+        }
+
+        if (state.selectedRestaurantId === restaurantId) {
+          await loadRestaurantDetails(restaurantId);
+        }
+
+        showToast('Restaurant updated');
+      } catch (err) {
+        showToast(err.message, true);
+      }
+    });
+  }
 }
 
 async function resetAndReloadRestaurants() {
