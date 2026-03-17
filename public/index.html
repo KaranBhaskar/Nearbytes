@@ -38,6 +38,19 @@
             <h2>Nearby Restaurants</h2>
             <p id="feed-meta" class="muted">No location selected</p>
           </div>
+          <div class="restaurant-filters">
+            <label for="dietary-filter">Dietary:</label>
+            <select id="dietary-filter">
+              <option value="all">All</option>
+              <option value="Kosher">Kosher</option>
+              <option value="Vegetarian">Vegetarian</option>
+              <option value="Halal">Halal</option>
+              <option value="Vegan">Vegan</option>
+              <option value="Gluten-free">Glueten-free</option>
+
+            </select>
+          </div>
+
           <div id="restaurant-list" class="restaurant-list"></div>
           <div id="list-loader" class="list-loader"></div>
           <div id="list-sentinel"></div>

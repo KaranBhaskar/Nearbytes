@@ -9,7 +9,8 @@ const state = {
   restaurants: [],
   selectedRestaurantId: null,
   ownerRestaurants: [],
-};
+  dietaryFilter: 'all',
+}; 
 
 const demoRestaurants = [
   {
@@ -18,7 +19,7 @@ const demoRestaurants = [
     address: "123 Market St, San Francisco",
     description: "Fresh vegetarian meals made with local ingredients.",
     rating: 4.6,
-    cuisineTags: ["Vegetarian", "Healthy"],
+    cuisineTags: ["Vegetarian", "Healthy", "Kosher"],
     image:
       "https://images.unsplash.com/photo-1546069901-ba9599a7e63c"
   },
@@ -66,6 +67,7 @@ const els = {
   menuItemForm: document.getElementById('menu-item-form'),
   imageRestaurantSelect: document.getElementById('image-restaurant-select'),
   menuRestaurantSelect: document.getElementById('menu-restaurant-select'),
+  dietaryFilter: document.getElementById('dietary-filter'),
 };
 
 let observer;
@@ -201,6 +203,20 @@ function renderRestaurantCard(restaurant) {
   return card;
 }
 
+function getFilteredRestaurants() {
+  if (!state.dietaryFilter || state.dietaryFilter === 'all') {
+    return state.restaurants;
+  }
+
+  return state.restaurants.filter((restaurant) =>
+    Array.isArray(restaurant.cuisineTags) &&
+    restaurant.cuisineTags.some(
+      (tag) => String(tag).toLowerCase() === state.dietaryFilter.toLowerCase()
+    )
+  );
+}
+
+
 function renderRestaurantList() {
   els.list.innerHTML = '';
 
@@ -214,9 +230,17 @@ function renderRestaurantList() {
     return;
   }
 
-  state.restaurants.forEach((restaurant) => {
+  const restaurantsToShow = getFilteredRestaurants();
+
+  if (restaurantsToShow.length === 0) {
+    els.list.innerHTML = '<p class="muted">No restaurants match this filter.</p>';
+    return;
+  } 
+
+  restaurantsToShow.forEach((restaurant) => {
     els.list.appendChild(renderRestaurantCard(restaurant));
   });
+
 }
 
 function renderFeedLoader() {
@@ -262,6 +286,23 @@ async function geocodeQuery(query) {
   };
 }
 
+async function reverseGeocode(lat, lng) {
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`;
+
+  const res = await fetch(url);
+  const data = await res.json();
+
+  const address = data.address || {};
+
+  return (
+    address.city ||
+    address.town ||
+    address.village ||  
+    address.state ||
+    "Unknown Location"
+  );
+}
+
 function setupInfiniteScroll() {
   if (observer) observer.disconnect();
 
@@ -294,13 +335,9 @@ async function loadMoreRestaurants() {
     params.set('cursor', state.cursor);
   }
 
-  try {
-    const data = await api(`/api/restaurants/nearby?${params.toString()}`);
-
-    let items = data.items || [];
-
-    if (items.length === 0 && state.restaurants.length === 0) {
-      items = demoRestaurants.map((restaurant, index) => ({
+    try {
+    if (state.restaurants.length === 0) {
+      const items = demoRestaurants.map((restaurant, index) => ({
         ...restaurant,
         coverImage: restaurant.image,
         distanceKm: 0.8 + index * 0.6,
@@ -319,6 +356,9 @@ async function loadMoreRestaurants() {
       renderRestaurantList();
       return;
     }
+
+    const data = await api(`/api/restaurants/nearby?${params.toString()}`);
+    const items = data.items || [];
 
     state.restaurants.push(...items);
     state.cursor = data.nextCursor || null;
@@ -592,6 +632,12 @@ function initTheme() {
 }
 
 function bindEvents() {
+  if (els.dietaryFilter) {
+    els.dietaryFilter.addEventListener('change', () => {
+      state.dietaryFilter = els.dietaryFilter.value;
+      renderRestaurantList();
+    });
+  }
   els.openAuthBtn.addEventListener('click', () => {
     navigateToAuthPage();
   });
@@ -630,10 +676,16 @@ function bindEvents() {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
         };
-        state.locationLabel = 'your current location';
-        els.locationStatus.textContent = `Using lat ${state.location.lat.toFixed(4)}, lng ${state.location.lng.toFixed(4)}`;
+        reverseGeocode(position.coords.latitude, position.coords.longitude)
+          .then((city) => {
+            state.locationLabel = city;
+            els.locationStatus.textContent = `Showing restaurants near ${city}`;
+        })
+        .catch(() => {
+          els.locationStatus.textContent = 'Using your current location';
+      });
 
-        try {
+        try { 
           await resetAndReloadRestaurants();
         } catch (err) {
           showToast(err.message, true);
