@@ -280,6 +280,23 @@ async function geocodeQuery(query) {
   };
 }
 
+async function reverseGeocode(lat, lng) {
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`;
+
+  const res = await fetch(url);
+  const data = await res.json();
+
+  const address = data.address || {};
+
+  return (
+    address.city ||
+    address.town ||
+    address.village ||  
+    address.state ||
+    "Unknown Location"
+  );
+}
+
 function setupInfiniteScroll() {
   if (observer) observer.disconnect();
 
@@ -345,6 +362,9 @@ async function loadMoreRestaurants() {
       renderRestaurantList();
       return;
     }
+
+    const data = await api(`/api/restaurants/nearby?${params.toString()}`);
+    const items = data.items || [];
 
     state.restaurants.push(...items);
     state.cursor = data.nextCursor || null;
@@ -706,10 +726,16 @@ function bindEvents() {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
         };
-        state.locationLabel = 'your current location';
-        els.locationStatus.textContent = `Using lat ${state.location.lat.toFixed(4)}, lng ${state.location.lng.toFixed(4)}`;
+        reverseGeocode(position.coords.latitude, position.coords.longitude)
+          .then((city) => {
+            state.locationLabel = city;
+            els.locationStatus.textContent = `Showing restaurants near ${city}`;
+        })
+        .catch(() => {
+          els.locationStatus.textContent = 'Using your current location';
+      });
 
-        try {
+        try { 
           await resetAndReloadRestaurants();
         } catch (err) {
           showToast(err.message, true);
