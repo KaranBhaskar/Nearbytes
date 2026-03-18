@@ -161,6 +161,34 @@ p {
   gap: 12px;
 }
 
+.restuarant-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px; 
+  margin-top: 10px;
+}
+
+#dietary-filter {
+  background: #0f1a2b;
+  color: #ffffff;
+  border: 1px solid #2b3b55;
+  border-radius: 8px;
+  padding: 6px; 
+  width: 180px; 
+  height: 70px;
+  font-size: 14px;
+  outline: none;
+}
+
+#dietary-filter-option {
+  padding: 6px;
+}
+
+#dietary-filter-focus {
+  border-color: #4a8cff;
+  box-shadow: 0 0 0 2px rgba(74, 140, 255, 0.25);
+}
+
 .restaurant-card {
   border: 1px solid var(--border);
   background: var(--surface-2);

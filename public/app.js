@@ -56,7 +56,6 @@ const els = {
   themeToggleBtn: document.getElementById('theme-toggle'),
   useLocationBtn: document.getElementById('use-location'),
   searchLocationBtn: document.getElementById('search-location'),
-  clearFiltersBtn: document.getElementById('clear-filters'),
   locationQuery: document.getElementById('location-query'),
   locationStatus: document.getElementById('location-status'),
   feedMeta: document.getElementById('feed-meta'),
@@ -75,6 +74,10 @@ const els = {
   imageRestaurantSelect: document.getElementById('image-restaurant-select'),
   menuRestaurantSelect: document.getElementById('menu-restaurant-select'),
   dietaryFilterInputs: Array.from(document.querySelectorAll('input[name="dietary-filter"]')),
+  dietaryDropdown: document.getElementById('dietary-dropdown'),
+  dietaryDropdownToggle: document.getElementById('dietary-dropdown-toggle'),
+  dietaryDropdownMenu: document.getElementById('dietary-dropdown-menu'),
+  clearFiltersBtn: document.getElementById('clear-filters'),
 };
 
 let observer;
@@ -171,6 +174,13 @@ function activeDietaryFilterText() {
 function renderRestaurantCard(restaurant) {
   const card = document.createElement('article');
   card.className = 'restaurant-card';
+
+  const tagsHtml = Array.isArray(restaurant.dietaryTags)
+  ? restaurant.dietaryTags
+      .map((tag) => `<span class="metric-pill">${tag}</span>`)
+      .join('')
+  : '';
+
   if (state.selectedRestaurantId === restaurant.id) {
     card.classList.add('selected');
   }
@@ -186,11 +196,7 @@ function renderRestaurantCard(restaurant) {
       <p class="muted">${restaurant.address}</p>
       <div class="metrics">
         <span class="metric-pill">${restaurant.distanceKm.toFixed(2)} km away</span>
-        ${
-          restaurant.dietaryTags && restaurant.dietaryTags.length
-            ? restaurant.dietaryTags.map((tag) => `<span class="metric-pill">${tag}</span>`).join('')
-            : ''
-        }
+        ${tagsHtml}
         <span class="metric-pill">Combined: ${ratingText(
           restaurant.combinedRating,
           restaurant.combinedRatingCount
@@ -199,24 +205,46 @@ function renderRestaurantCard(restaurant) {
           restaurant.googleRating,
           restaurant.googleRatingCount
         )}</span>
-        <span class="metric-pill">App: ${ratingText(restaurant.appRating, restaurant.appRatingCount)}</span>
+        <span class="metric-pill">App: ${ratingText(
+          restaurant.appRating,
+          restaurant.appRatingCount
+        )}</span>
       </div>
     </div>
   `;
 
   card.addEventListener('click', () => {
-  state.selectedRestaurantId = restaurant.id;
-  renderRestaurantList();
+    state.selectedRestaurantId = restaurant.id;
+    renderRestaurantList();
 
-  if (restaurant.id >= 9001) {
-    renderDemoRestaurantDetails(restaurant);
-    return;
-  }
+    if (restaurant.id >= 9001) {
+      renderDemoRestaurantDetails(restaurant);
+      return;
+    }
 
-  loadRestaurantDetails(restaurant.id).catch((err) => showToast(err.message, true));
+    loadRestaurantDetails(restaurant.id).catch((err) => showToast(err.message, true));
   });
 
   return card;
+}
+
+function getFilteredRestaurants() {
+  const selectedFilters = els.dietaryFilterInputs
+    .filter((input) => input.checked)
+    .map((input) => input.value.toLowerCase());
+
+  if (selectedFilters.length === 0) {
+    return state.restaurants;
+  }
+
+  return state.restaurants.filter((restaurant) =>
+    Array.isArray(restaurant.dietaryTags) &&
+    selectedFilters.some((selectedTag) =>
+      restaurant.dietaryTags.some(
+        (tag) => String(tag).toLowerCase() === selectedTag
+      )
+    )
+  );
 }
 
 function renderRestaurantList() {
@@ -232,7 +260,14 @@ function renderRestaurantList() {
     return;
   }
 
-  state.restaurants.forEach((restaurant) => {
+  const restaurantsToShow = getFilteredRestaurants();
+
+  if (restaurantsToShow.length === 0) {
+    els.list.innerHTML = '<p class="muted">No restaurants match this filter.</p>';
+    return;
+  }
+
+  restaurantsToShow.forEach((restaurant) => {
     els.list.appendChild(renderRestaurantCard(restaurant));
   });
 }
@@ -278,6 +313,23 @@ async function geocodeQuery(query) {
     lng: Number(best.lon),
     label: best.display_name,
   };
+}
+
+async function reverseGeocode(lat, lng) {
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`;
+
+  const res = await fetch(url);
+  const data = await res.json();
+
+  const address = data.address || {};
+
+  return (
+    address.city ||
+    address.town ||
+    address.village ||  
+    address.state ||
+    'Unknown Location'
+  );
 }
 
 function setupInfiniteScroll() {
@@ -667,9 +719,73 @@ function initTheme() {
   applyTheme(prefersDark ? 'dark' : 'light');
 }
 
+function updateDietaryDropdownLabel() {
+  const selected = els.dietaryFilterInputs
+    .filter((input) => input.checked)
+    .map((input) => input.value);
+
+  if (selected.length === 0) {
+    els.dietaryDropdownToggle.textContent = 'All ▼';
+    return;
+  }
+
+  els.dietaryDropdownToggle.textContent = `${selected.join(', ')} ▼`;
+}
+
 function bindEvents() {
   els.openAuthBtn.addEventListener('click', () => {
     navigateToAuthPage();
+  });
+
+    if (els.dietaryDropdownToggle) {
+    els.dietaryDropdownToggle.addEventListener('click', () => {
+      els.dietaryDropdownMenu.classList.toggle('hidden');
+    });
+  }
+
+  if (els.dietaryFilterInputs.length) {
+    els.dietaryFilterInputs.forEach((input) => {
+      input.addEventListener('change', async () => {
+        state.dietaryFilters = els.dietaryFilterInputs
+          .filter((item) => item.checked)
+          .map((item) => item.value);
+
+        updateDietaryDropdownLabel();
+
+        if (state.location) {
+          await resetAndReloadRestaurants();
+        } else {
+          renderRestaurantList();
+        }
+      });
+    });
+  }
+
+  if (els.clearFiltersBtn) {
+    els.clearFiltersBtn.addEventListener('click', async () => {
+      els.dietaryFilterInputs.forEach((input) => {
+        input.checked = false;
+      });
+
+      state.dietaryFilters = [];
+      updateDietaryDropdownLabel();
+      els.dietaryDropdownMenu.classList.add('hidden');
+
+      if (state.location) {
+        await resetAndReloadRestaurants();
+      } else {
+        renderRestaurantList();
+      }
+    });
+  }
+
+  document.addEventListener('click', (event) => {
+    if (
+      els.dietaryDropdown &&
+      !els.dietaryDropdown.contains(event.target)
+    ) {
+      els.dietaryDropdownMenu.classList.add('hidden');
+    }
   });
 
   els.themeToggleBtn.addEventListener('click', () => {
@@ -706,8 +822,16 @@ function bindEvents() {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
         };
-        state.locationLabel = 'your current location';
-        els.locationStatus.textContent = `Using lat ${state.location.lat.toFixed(4)}, lng ${state.location.lng.toFixed(4)}`;
+        
+        reverseGeocode(position.coords.latitude, position.coords.longitude)
+          .then((city) => {
+            state.locationLabel = city;
+            els.locationStatus.textContent = `Showing restaurants near ${city}`;
+          })
+          .catch(() => {
+            state.locationLabel = 'Your current location';
+            els.locationStatus.textContent = 'Using your current location';
+          });
 
         try {
           await resetAndReloadRestaurants();
@@ -740,25 +864,6 @@ function bindEvents() {
     } catch (err) {
       showToast(err.message, true);
       els.locationStatus.textContent = 'Search failed. Try another query.';
-    }
-  });
-
-  els.dietaryFilterInputs.forEach((input) => {
-    input.addEventListener('change', async () => {
-      state.dietaryFilters = els.dietaryFilterInputs.filter((item) => item.checked).map((item) => item.value);
-      if (state.location) {
-        await resetAndReloadRestaurants();
-      }
-    });
-  });
-
-  els.clearFiltersBtn.addEventListener('click', async () => {
-    els.dietaryFilterInputs.forEach((input) => {
-      input.checked = false;
-    });
-    state.dietaryFilters = [];
-    if (state.location) {
-      await resetAndReloadRestaurants();
     }
   });
 

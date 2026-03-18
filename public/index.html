@@ -30,12 +30,27 @@
           <button id="search-location" class="btn btn-outline">Search</button>
         </div>
         <div class="dietary-filters">
-          <span class="muted">Dietary filters:</span>
-          <label><input type="checkbox" name="dietary-filter" value="vegan" /> Vegan</label>
-          <label><input type="checkbox" name="dietary-filter" value="halal" /> Halal</label>
-          <label><input type="checkbox" name="dietary-filter" value="gluten-free" /> Gluten-Free</label>
-          <button id="clear-filters" class="btn btn-outline" type="button">Clear Filters</button>
-        </div>
+          <div class="restaurant-filters">
+            <label class="filter-label">Dietary:</label>
+
+            <div class="multi-filter-dropdown" id="dietary-dropdown">
+              <button type="button" id="dietary-dropdown-toggle" class="dropdown-toggle">
+                All ▼
+              </button>
+
+              <div id="dietary-dropdown-menu" class="dropdown-menu hidden">
+                <label><input type="checkbox" name="dietary-filter" value="Vegan" /> Vegan</label>
+                <label><input type="checkbox" name="dietary-filter" value="Halal" /> Halal</label>
+                <label><input type="checkbox" name="dietary-filter" value="Gluten free" /> Gluten-Free</label>
+                <label><input type="checkbox" name="dietary-filter" value="Vegetarian" /> Vegetarian</label>
+                <label><input type="checkbox" name="dietary-filter" value="Kosher" /> Kosher</label>
+
+                <button type="button" id="clear-filters" class="btn btn-outline clear-filters-btn">
+                  Clear Filters
+                </button>
+              </div>
+            </div>
+          </div>
         <p id="location-status" class="muted">Set your location to discover nearby restaurants.</p>
       </section>
 
