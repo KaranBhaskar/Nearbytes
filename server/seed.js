@@ -2,9 +2,8 @@ require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const { getDb } = require('./db');
 
-const db = getDb();
-
 function seed() {
+  const db = getDb();
   const ownerPassword = bcrypt.hashSync('Owner@123', 10);
   const customerPassword = bcrypt.hashSync('Customer@123', 10);
 

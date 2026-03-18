@@ -10,40 +10,7 @@ const state = {
   selectedRestaurantId: null,
   ownerRestaurants: [],
   dietaryFilter: 'all',
-}; 
-
-const demoRestaurants = [
-  {
-    id: 9001,
-    name: "Green Garden Bistro",
-    address: "123 Market St, San Francisco",
-    description: "Fresh vegetarian meals made with local ingredients.",
-    rating: 4.6,
-    cuisineTags: ["Vegetarian", "Healthy", "Kosher"],
-    image:
-      "https://images.unsplash.com/photo-1546069901-ba9599a7e63c"
-  },
-  {
-    id: 9002,
-    name: "Spice Route Indian Kitchen",
-    address: "456 Mission St, San Francisco",
-    description: "Authentic Indian cuisine with rich spices and flavors.",
-    rating: 4.4,
-    cuisineTags: ["Indian", "Curry"],
-    image:
-      "https://images.unsplash.com/photo-1601050690597-df0568f70950"
-  },
-  {
-    id: 9003,
-    name: "Bella Italia Trattoria",
-    address: "789 Castro St, San Francisco",
-    description: "Traditional Italian pasta, pizza, and wine.",
-    rating: 4.7,
-    cuisineTags: ["Italian", "Pasta", "Pizza"],
-    image:
-      "https://images.unsplash.com/photo-1600891964599-f61ba0e24092"
-  }
-];
+};
 
 const els = {
   userPill: document.getElementById('user-pill'),
@@ -189,15 +156,9 @@ function renderRestaurantCard(restaurant) {
   `;
 
   card.addEventListener('click', () => {
-  state.selectedRestaurantId = restaurant.id;
-  renderRestaurantList();
-
-  if (restaurant.id >= 9001) {
-    renderDemoRestaurantDetails(restaurant);
-    return;
-  }
-
-  loadRestaurantDetails(restaurant.id).catch((err) => showToast(err.message, true));
+    state.selectedRestaurantId = restaurant.id;
+    renderRestaurantList();
+    loadRestaurantDetails(restaurant.id).catch((err) => showToast(err.message, true));
   });
 
   return card;
@@ -335,28 +296,7 @@ async function loadMoreRestaurants() {
     params.set('cursor', state.cursor);
   }
 
-    try {
-    if (state.restaurants.length === 0) {
-      const items = demoRestaurants.map((restaurant, index) => ({
-        ...restaurant,
-        coverImage: restaurant.image,
-        distanceKm: 0.8 + index * 0.6,
-        combinedRating: restaurant.rating,
-        combinedRatingCount: 24 + index * 7,
-        googleRating: restaurant.rating,
-        googleRatingCount: 18 + index * 5,
-        appRating: restaurant.rating,
-        appRatingCount: 10 + index * 3,
-      }));
-
-      state.hasMore = false;
-      state.cursor = null;
-      state.restaurants = items;
-      els.feedMeta.textContent = `${items.length} demo restaurants near ${state.locationLabel || 'selected area'}`;
-      renderRestaurantList();
-      return;
-    }
-
+  try {
     const data = await api(`/api/restaurants/nearby?${params.toString()}`);
     const items = data.items || [];
 
@@ -389,9 +329,6 @@ function renderReviewForm(detail, reviews) {
   }
 
   const myReview = detail.myReview;
-  const myReviewId = myReview
-    ? myReview.id
-    : (reviews.find((item) => item.userId === state.user.id) || {}).id || '';
 
   return `
     <form id="review-form" class="review-form">
@@ -404,48 +341,7 @@ function renderReviewForm(detail, reviews) {
       }</textarea>
       <button class="btn btn-primary" type="submit">${myReview ? 'Save Review' : 'Post Review'}</button>
       ${myReview ? '<button class="btn btn-outline" type="button" id="delete-review">Delete Review</button>' : ''}
-      <input type="hidden" name="reviewId" value="${myReviewId || ''}" />
     </form>
-  `;
-}
-
-function renderDemoRestaurantDetails(restaurant) {
-  els.detailsPanel.innerHTML = `
-    <h2>${restaurant.name}</h2>
-    <p class="muted">${restaurant.address}</p>
-    <p>${restaurant.description}</p>
-
-    <div class="metrics">
-      <span class="metric-pill">Combined: ${restaurant.combinedRating.toFixed(1)} (${restaurant.combinedRatingCount})</span>
-      <span class="metric-pill">Google: ${restaurant.googleRating.toFixed(1)} (${restaurant.googleRatingCount})</span>
-      <span class="metric-pill">App: ${restaurant.appRating.toFixed(1)} (${restaurant.appRatingCount})</span>
-    </div>
-
-    <h3>Gallery</h3>
-    <div class="detail-gallery">
-      <img src="${restaurant.coverImage}" alt="${restaurant.name}" loading="lazy" />
-    </div>
-
-    <h3>Menu</h3>
-    <div>
-      <div class="menu-item">
-        <strong>Chef Special Bowl</strong> - $14.99
-        <p class="muted">A sample showcase item for this demo restaurant.</p>
-      </div>
-      <div class="menu-item">
-        <strong>House Drink</strong> - $4.99
-        <p class="muted">Refreshing beverage option.</p>
-      </div>
-    </div>
-
-    <h3>Reviews</h3>
-    <div>
-      <article class="review-item">
-        <strong>Demo User</strong> - 5/5
-        <p>Great atmosphere and tasty food. This is a showcase review.</p>
-        <p class="muted">Today</p>
-      </article>
-    </div>
   `;
 }
 

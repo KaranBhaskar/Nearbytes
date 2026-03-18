@@ -19,7 +19,7 @@ const { haversineKm, encodeCursor, decodeCursor, combineRatings } = require('./u
 const app = express();
 const db = getDb();
 
-const uploadsDir = path.join(process.cwd(), 'uploads');
+const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -53,6 +53,10 @@ app.use('/uploads', express.static(uploadsDir));
 app.use(express.static(path.join(process.cwd(), 'public')));
 
 function parseCuisineTags(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
   if (!value) return [];
 
   try {
@@ -64,6 +68,48 @@ function parseCuisineTags(value) {
       .map((item) => item.trim())
       .filter(Boolean);
   }
+}
+
+function parseNumericId(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseCoordinate(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function trimOrNull(value) {
+  if (value == null) return null;
+
+  const trimmed = String(value).trim();
+  return trimmed ? trimmed : null;
+}
+
+function parseCuisineInput(value, fallback = []) {
+  if (value == null) {
+    return [...fallback];
+  }
+
+  const parsed = parseCuisineTags(value);
+  return parsed.length ? parsed : [];
+}
+
+function getRestaurantRecord(restaurantId) {
+  return db.prepare('SELECT id FROM restaurants WHERE id = ?').get(restaurantId);
+}
+
+function getOwnedRestaurantRecord(restaurantId, ownerId) {
+  return db.prepare('SELECT * FROM restaurants WHERE id = ? AND owner_id = ?').get(restaurantId, ownerId);
+}
+
+function getReviewRecord(reviewId, restaurantId) {
+  return db.prepare('SELECT * FROM reviews WHERE id = ? AND restaurant_id = ?').get(reviewId, restaurantId);
+}
+
+function getMenuItemRecord(itemId, restaurantId) {
+  return db.prepare('SELECT * FROM menu_items WHERE id = ? AND restaurant_id = ?').get(itemId, restaurantId);
 }
 
 function normalizeRestaurantRow(row) {
@@ -184,8 +230,8 @@ app.post('/api/auth/logout', (_req, res) => {
 });
 
 app.get('/api/restaurants/nearby', async (req, res) => {
-  const lat = Number(req.query.lat);
-  const lng = Number(req.query.lng);
+  const lat = parseCoordinate(req.query.lat);
+  const lng = parseCoordinate(req.query.lng);
 
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return res.status(400).json({ error: 'lat and lng query params are required numbers' });
@@ -246,8 +292,8 @@ app.get('/api/restaurants/nearby', async (req, res) => {
 });
 
 app.get('/api/restaurants/:id', optionalAuth, (req, res) => {
-  const restaurantId = Number(req.params.id);
-  if (!Number.isFinite(restaurantId)) {
+  const restaurantId = parseNumericId(req.params.id);
+  if (!restaurantId) {
     return res.status(400).json({ error: 'invalid restaurant id' });
   }
 
@@ -289,7 +335,7 @@ app.get('/api/restaurants/:id', optionalAuth, (req, res) => {
           WHERE restaurant_id = ? AND user_id = ?
         `
         )
-        .get(restaurantId, req.user.id)
+        .get(restaurantId, req.user.id) || null
     : null;
 
   return res.json({
@@ -301,8 +347,8 @@ app.get('/api/restaurants/:id', optionalAuth, (req, res) => {
 });
 
 app.get('/api/restaurants/:id/reviews', (req, res) => {
-  const restaurantId = Number(req.params.id);
-  if (!Number.isFinite(restaurantId)) {
+  const restaurantId = parseNumericId(req.params.id);
+  if (!restaurantId) {
     return res.status(400).json({ error: 'invalid restaurant id' });
   }
 
@@ -329,11 +375,11 @@ app.get('/api/restaurants/:id/reviews', (req, res) => {
 });
 
 app.post('/api/restaurants/:id/reviews', requireAuth, requireRole('customer'), (req, res) => {
-  const restaurantId = Number(req.params.id);
+  const restaurantId = parseNumericId(req.params.id);
   const rating = Number(req.body.rating);
-  const comment = req.body.comment == null ? null : String(req.body.comment).trim();
+  const comment = trimOrNull(req.body.comment);
 
-  if (!Number.isFinite(restaurantId)) {
+  if (!restaurantId) {
     return res.status(400).json({ error: 'invalid restaurant id' });
   }
 
@@ -341,7 +387,7 @@ app.post('/api/restaurants/:id/reviews', requireAuth, requireRole('customer'), (
     return res.status(400).json({ error: 'rating must be between 1 and 5' });
   }
 
-  const exists = db.prepare('SELECT id FROM restaurants WHERE id = ?').get(restaurantId);
+  const exists = getRestaurantRecord(restaurantId);
   if (!exists) {
     return res.status(404).json({ error: 'restaurant not found' });
   }
@@ -372,12 +418,12 @@ app.post('/api/restaurants/:id/reviews', requireAuth, requireRole('customer'), (
 });
 
 app.put('/api/restaurants/:id/reviews/:reviewId', requireAuth, requireRole('customer'), (req, res) => {
-  const restaurantId = Number(req.params.id);
-  const reviewId = Number(req.params.reviewId);
+  const restaurantId = parseNumericId(req.params.id);
+  const reviewId = parseNumericId(req.params.reviewId);
   const rating = Number(req.body.rating);
-  const comment = req.body.comment == null ? null : String(req.body.comment).trim();
+  const comment = trimOrNull(req.body.comment);
 
-  if (!Number.isFinite(restaurantId) || !Number.isFinite(reviewId)) {
+  if (!restaurantId || !reviewId) {
     return res.status(400).json({ error: 'invalid id' });
   }
 
@@ -385,9 +431,7 @@ app.put('/api/restaurants/:id/reviews/:reviewId', requireAuth, requireRole('cust
     return res.status(400).json({ error: 'rating must be between 1 and 5' });
   }
 
-  const review = db
-    .prepare('SELECT * FROM reviews WHERE id = ? AND restaurant_id = ?')
-    .get(reviewId, restaurantId);
+  const review = getReviewRecord(reviewId, restaurantId);
 
   if (!review) {
     return res.status(404).json({ error: 'review not found' });
@@ -413,16 +457,14 @@ app.put('/api/restaurants/:id/reviews/:reviewId', requireAuth, requireRole('cust
 });
 
 app.delete('/api/restaurants/:id/reviews/:reviewId', requireAuth, requireRole('customer'), (req, res) => {
-  const restaurantId = Number(req.params.id);
-  const reviewId = Number(req.params.reviewId);
+  const restaurantId = parseNumericId(req.params.id);
+  const reviewId = parseNumericId(req.params.reviewId);
 
-  if (!Number.isFinite(restaurantId) || !Number.isFinite(reviewId)) {
+  if (!restaurantId || !reviewId) {
     return res.status(400).json({ error: 'invalid id' });
   }
 
-  const review = db
-    .prepare('SELECT * FROM reviews WHERE id = ? AND restaurant_id = ?')
-    .get(reviewId, restaurantId);
+  const review = getReviewRecord(reviewId, restaurantId);
 
   if (!review) {
     return res.status(404).json({ error: 'review not found' });
@@ -467,18 +509,13 @@ app.post('/api/owner/restaurants', requireAuth, requireRole('owner'), (req, res)
     return res.status(400).json({ error: 'name, address, lat and lng are required' });
   }
 
-  const parsedLat = Number(lat);
-  const parsedLng = Number(lng);
-  if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) {
+  const parsedLat = parseCoordinate(lat);
+  const parsedLng = parseCoordinate(lng);
+  if (parsedLat == null || parsedLng == null) {
     return res.status(400).json({ error: 'lat and lng must be numbers' });
   }
 
-  const tags = Array.isArray(cuisineTags)
-    ? cuisineTags
-    : String(cuisineTags || '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
+  const tags = parseCuisineInput(cuisineTags);
 
   const info = db
     .prepare(
@@ -495,9 +532,9 @@ app.post('/api/owner/restaurants', requireAuth, requireRole('owner'), (req, res)
       String(address).trim(),
       parsedLat,
       parsedLng,
-      description ? String(description).trim() : null,
-      phone ? String(phone).trim() : null,
-      website ? String(website).trim() : null,
+      trimOrNull(description),
+      trimOrNull(phone),
+      trimOrNull(website),
       JSON.stringify(tags),
       null,
       null,
@@ -509,33 +546,29 @@ app.post('/api/owner/restaurants', requireAuth, requireRole('owner'), (req, res)
 });
 
 app.put('/api/owner/restaurants/:id', requireAuth, requireRole('owner'), (req, res) => {
-  const restaurantId = Number(req.params.id);
-  if (!Number.isFinite(restaurantId)) {
+  const restaurantId = parseNumericId(req.params.id);
+  if (!restaurantId) {
     return res.status(400).json({ error: 'invalid restaurant id' });
   }
 
-  const existing = db
-    .prepare('SELECT * FROM restaurants WHERE id = ? AND owner_id = ?')
-    .get(restaurantId, req.user.id);
+  const existing = getOwnedRestaurantRecord(restaurantId, req.user.id);
 
   if (!existing) {
     return res.status(404).json({ error: 'owned restaurant not found' });
   }
 
   const { name, address, lat, lng, description, phone, website, cuisineTags } = req.body;
-  const nextLat = lat == null ? existing.lat : Number(lat);
-  const nextLng = lng == null ? existing.lng : Number(lng);
+  const nextLat = lat == null ? existing.lat : parseCoordinate(lat);
+  const nextLng = lng == null ? existing.lng : parseCoordinate(lng);
 
-  if (!Number.isFinite(nextLat) || !Number.isFinite(nextLng)) {
+  if (nextLat == null || nextLng == null) {
     return res.status(400).json({ error: 'lat and lng must be valid numbers' });
   }
 
-  const tags = Array.isArray(cuisineTags)
-    ? cuisineTags
-    : String(cuisineTags || '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
+  const nextTags =
+    cuisineTags == null
+      ? parseCuisineTags(existing.cuisine_tags)
+      : parseCuisineInput(cuisineTags);
 
   db.prepare(
     `
@@ -557,10 +590,10 @@ app.put('/api/owner/restaurants/:id', requireAuth, requireRole('owner'), (req, r
     address ? String(address).trim() : existing.address,
     nextLat,
     nextLng,
-    description == null ? existing.description : String(description).trim(),
-    phone == null ? existing.phone : String(phone).trim(),
-    website == null ? existing.website : String(website).trim(),
-    JSON.stringify(tags.length ? tags : parseCuisineTags(existing.cuisine_tags)),
+    description == null ? existing.description : trimOrNull(description),
+    phone == null ? existing.phone : trimOrNull(phone),
+    website == null ? existing.website : trimOrNull(website),
+    JSON.stringify(nextTags),
     restaurantId
   );
 
@@ -569,14 +602,12 @@ app.put('/api/owner/restaurants/:id', requireAuth, requireRole('owner'), (req, r
 });
 
 app.delete('/api/owner/restaurants/:id', requireAuth, requireRole('owner'), (req, res) => {
-  const restaurantId = Number(req.params.id);
-  if (!Number.isFinite(restaurantId)) {
+  const restaurantId = parseNumericId(req.params.id);
+  if (!restaurantId) {
     return res.status(400).json({ error: 'invalid restaurant id' });
   }
 
-  const existing = db
-    .prepare('SELECT id FROM restaurants WHERE id = ? AND owner_id = ?')
-    .get(restaurantId, req.user.id);
+  const existing = getOwnedRestaurantRecord(restaurantId, req.user.id);
 
   if (!existing) {
     return res.status(404).json({ error: 'owned restaurant not found' });
@@ -592,14 +623,12 @@ app.post(
   requireRole('owner'),
   upload.array('images', 10),
   (req, res) => {
-    const restaurantId = Number(req.params.id);
-    if (!Number.isFinite(restaurantId)) {
+    const restaurantId = parseNumericId(req.params.id);
+    if (!restaurantId) {
       return res.status(400).json({ error: 'invalid restaurant id' });
     }
 
-    const existing = db
-      .prepare('SELECT id FROM restaurants WHERE id = ? AND owner_id = ?')
-      .get(restaurantId, req.user.id);
+    const existing = getOwnedRestaurantRecord(restaurantId, req.user.id);
 
     if (!existing) {
       return res.status(404).json({ error: 'owned restaurant not found' });
@@ -635,14 +664,12 @@ app.post(
   requireRole('owner'),
   upload.single('image'),
   (req, res) => {
-    const restaurantId = Number(req.params.id);
-    if (!Number.isFinite(restaurantId)) {
+    const restaurantId = parseNumericId(req.params.id);
+    if (!restaurantId) {
       return res.status(400).json({ error: 'invalid restaurant id' });
     }
 
-    const owned = db
-      .prepare('SELECT id FROM restaurants WHERE id = ? AND owner_id = ?')
-      .get(restaurantId, req.user.id);
+    const owned = getOwnedRestaurantRecord(restaurantId, req.user.id);
 
     if (!owned) {
       return res.status(404).json({ error: 'owned restaurant not found' });
@@ -663,7 +690,7 @@ app.post(
       .run(
         restaurantId,
         String(name).trim(),
-        description ? String(description).trim() : null,
+        trimOrNull(description),
         parsedPrice,
         imageUrl
       );
@@ -684,24 +711,20 @@ app.put(
   requireRole('owner'),
   upload.single('image'),
   (req, res) => {
-    const restaurantId = Number(req.params.id);
-    const itemId = Number(req.params.itemId);
+    const restaurantId = parseNumericId(req.params.id);
+    const itemId = parseNumericId(req.params.itemId);
 
-    if (!Number.isFinite(restaurantId) || !Number.isFinite(itemId)) {
+    if (!restaurantId || !itemId) {
       return res.status(400).json({ error: 'invalid ids' });
     }
 
-    const owned = db
-      .prepare('SELECT id FROM restaurants WHERE id = ? AND owner_id = ?')
-      .get(restaurantId, req.user.id);
+    const owned = getOwnedRestaurantRecord(restaurantId, req.user.id);
 
     if (!owned) {
       return res.status(404).json({ error: 'owned restaurant not found' });
     }
 
-    const existingItem = db
-      .prepare('SELECT * FROM menu_items WHERE id = ? AND restaurant_id = ?')
-      .get(itemId, restaurantId);
+    const existingItem = getMenuItemRecord(itemId, restaurantId);
 
     if (!existingItem) {
       return res.status(404).json({ error: 'menu item not found' });
@@ -709,7 +732,7 @@ app.put(
 
     const nextName = req.body.name ? String(req.body.name).trim() : existingItem.name;
     const nextDescription =
-      req.body.description == null ? existingItem.description : String(req.body.description).trim();
+      req.body.description == null ? existingItem.description : trimOrNull(req.body.description);
     const nextPrice =
       req.body.price == null
         ? existingItem.price
@@ -745,24 +768,20 @@ app.delete(
   requireAuth,
   requireRole('owner'),
   (req, res) => {
-    const restaurantId = Number(req.params.id);
-    const itemId = Number(req.params.itemId);
+    const restaurantId = parseNumericId(req.params.id);
+    const itemId = parseNumericId(req.params.itemId);
 
-    if (!Number.isFinite(restaurantId) || !Number.isFinite(itemId)) {
+    if (!restaurantId || !itemId) {
       return res.status(400).json({ error: 'invalid ids' });
     }
 
-    const owned = db
-      .prepare('SELECT id FROM restaurants WHERE id = ? AND owner_id = ?')
-      .get(restaurantId, req.user.id);
+    const owned = getOwnedRestaurantRecord(restaurantId, req.user.id);
 
     if (!owned) {
       return res.status(404).json({ error: 'owned restaurant not found' });
     }
 
-    const existingItem = db
-      .prepare('SELECT id FROM menu_items WHERE id = ? AND restaurant_id = ?')
-      .get(itemId, restaurantId);
+    const existingItem = getMenuItemRecord(itemId, restaurantId);
 
     if (!existingItem) {
       return res.status(404).json({ error: 'menu item not found' });
