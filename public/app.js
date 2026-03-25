@@ -50,6 +50,9 @@ const demoRestaurants = [
   }
 ];
 
+const CITY_SEARCH_RADIUS_METERS = 20000;
+const EXTERNAL_RESTAURANT_LIMIT = 40;
+
 const els = {
   userPill: document.getElementById('user-pill'),
   openAuthBtn: document.getElementById('open-auth'),
@@ -128,6 +131,143 @@ async function api(path, options = {}) {
   }
 
   return data;
+}
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const toRad = (value) => (value * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+
+  return 2 * earthRadiusKm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function titleCaseWords(value) {
+  return String(value || '')
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function parseCuisineList(value) {
+  return String(value || '')
+    .split(/[;,]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => titleCaseWords(item));
+}
+
+function inferDietaryTags(tags = {}) {
+  const dietaryTags = [];
+
+  if (tags['diet:vegan'] === 'yes') dietaryTags.push('vegan');
+  if (tags['diet:vegetarian'] === 'yes') dietaryTags.push('vegetarian');
+  if (tags['diet:halal'] === 'yes') dietaryTags.push('halal');
+  if (tags['diet:kosher'] === 'yes') dietaryTags.push('kosher');
+  if (tags['diet:gluten_free'] === 'yes') dietaryTags.push('gluten-free');
+
+  return dietaryTags;
+}
+
+function buildAddressFromTags(tags = {}) {
+  const parts = [
+    tags['addr:housenumber'],
+    tags['addr:street'],
+    tags['addr:city'] || tags['addr:town'] || tags['addr:village'],
+    tags['addr:state'],
+    tags['addr:postcode'],
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+,/g, ',')
+    .trim();
+
+  return parts || tags['addr:full'] || 'Address not available';
+}
+
+function normalizeExternalRestaurant(element, originLat, originLng) {
+  const tags = element.tags || {};
+  const lat = element.lat ?? element.center?.lat;
+  const lng = element.lon ?? element.center?.lon;
+  const name = String(tags.name || '').trim();
+
+  if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
+
+  const cuisineTags = parseCuisineList(tags.cuisine);
+  const dietaryTags = inferDietaryTags(tags);
+
+  return {
+    id: `osm-${element.type}-${element.id}`,
+    ownerId: null,
+    name,
+    address: buildAddressFromTags(tags),
+    lat,
+    lng,
+    description:
+      tags.description ||
+      `Community-listed restaurant near ${state.locationLabel || 'your selected city'}.`,
+    phone: tags.phone || tags['contact:phone'] || null,
+    website: tags.website || tags['contact:website'] || null,
+    cuisineTags,
+    dietaryTags,
+    googlePlaceId: null,
+    coverImage: null,
+    googleRating: null,
+    googleRatingCount: 0,
+    appRating: null,
+    appRatingCount: 0,
+    combinedRating: null,
+    combinedRatingCount: 0,
+    distanceKm: haversineKm(originLat, originLng, lat, lng),
+    externalSource: 'openstreetmap',
+    openingHours: tags.opening_hours || null,
+  };
+}
+
+async function fetchExternalRestaurants(lat, lng) {
+  const query = `
+[out:json][timeout:20];
+(
+  node["amenity"="restaurant"](around:${CITY_SEARCH_RADIUS_METERS},${lat},${lng});
+  way["amenity"="restaurant"](around:${CITY_SEARCH_RADIUS_METERS},${lat},${lng});
+  relation["amenity"="restaurant"](around:${CITY_SEARCH_RADIUS_METERS},${lat},${lng});
+);
+out center tags;
+`;
+
+  const response = await fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      'Accept': 'application/json',
+    },
+    body: new URLSearchParams({ data: query }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to load city restaurants');
+  }
+
+  const data = await response.json();
+  const seen = new Set();
+
+  return (data.elements || [])
+    .map((element) => normalizeExternalRestaurant(element, lat, lng))
+    .filter(Boolean)
+    .filter((restaurant) => {
+      const key = `${restaurant.name.toLowerCase()}|${restaurant.address.toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.distanceKm - b.distanceKm)
+    .slice(0, EXTERNAL_RESTAURANT_LIMIT);
 }
 
 function saveAuth(token, user) {
@@ -222,6 +362,11 @@ function renderRestaurantCard(restaurant) {
   card.addEventListener('click', () => {
     state.selectedRestaurantId = restaurant.id;
     renderRestaurantList();
+
+    if (restaurant.externalSource === 'openstreetmap') {
+      renderExternalRestaurantDetails(restaurant);
+      return;
+    }
 
     if (restaurant.id >= 9001) {
       renderDemoRestaurantDetails(restaurant);
@@ -525,6 +670,22 @@ async function loadMoreRestaurants() {
   }
 
   try {
+    const externalItems = await fetchExternalRestaurants(state.location.lat, state.location.lng);
+    const filteredExternalItems = externalItems.filter((restaurant) =>
+      state.dietaryFilters.every((tag) =>
+        (restaurant.dietaryTags || []).map((item) => item.toLowerCase()).includes(String(tag).toLowerCase())
+      )
+    );
+
+    if (filteredExternalItems.length > 0) {
+      state.hasMore = false;
+      state.cursor = null;
+      state.restaurants = filteredExternalItems;
+      els.feedMeta.textContent = `${filteredExternalItems.length} restaurants found near ${state.locationLabel || 'selected area'}${activeDietaryFilterText()}`;
+      renderRestaurantList();
+      return;
+    }
+
     const data = await api(`/api/restaurants/nearby?${params.toString()}`);
 
     let items = data.items || [];
@@ -644,6 +805,43 @@ function renderDemoRestaurantDetails(restaurant) {
         <p>Great atmosphere and tasty food. This is a showcase review.</p>
         <p class="muted">Today</p>
       </article>
+    </div>
+  `;
+}
+
+function renderExternalRestaurantDetails(restaurant) {
+  const cuisine = restaurant.cuisineTags.length
+    ? restaurant.cuisineTags.map((tag) => `<span class="metric-pill">${tag}</span>`).join('')
+    : '<span class="metric-pill">Cuisine unknown</span>';
+  const dietary = restaurant.dietaryTags.length
+    ? restaurant.dietaryTags.map((tag) => `<span class="metric-pill">${tag}</span>`).join('')
+    : '';
+  const websiteHtml = restaurant.website
+    ? `<p><a href="${restaurant.website}" target="_blank" rel="noreferrer">Website</a></p>`
+    : '';
+  const phoneHtml = restaurant.phone ? `<p><strong>Phone:</strong> ${restaurant.phone}</p>` : '';
+  const openingHoursHtml = restaurant.openingHours
+    ? `<p><strong>Hours:</strong> ${restaurant.openingHours}</p>`
+    : '';
+
+  els.detailsPanel.innerHTML = `
+    <h2>${restaurant.name}</h2>
+    <p class="muted">${restaurant.address}</p>
+    <p>${restaurant.description}</p>
+
+    <div class="metrics">
+      <span class="metric-pill">${restaurant.distanceKm.toFixed(2)} km away</span>
+      <span class="metric-pill">OpenStreetMap</span>
+      ${cuisine}
+      ${dietary}
+    </div>
+
+    <h3>Information</h3>
+    <div>
+      ${phoneHtml}
+      ${websiteHtml}
+      ${openingHoursHtml}
+      <p class="muted">Photos, menus, and reviews are only available for restaurants stored in Nearby Bites.</p>
     </div>
   `;
 }
@@ -772,6 +970,10 @@ async function loadRestaurantDetails(restaurantId) {
 }
 
 async function refreshRestaurantInFeed(restaurantId) {
+  if (typeof restaurantId !== 'number') {
+    return;
+  }
+
   const detail = await api(`/api/restaurants/${restaurantId}`);
   const restaurant = detail.restaurant;
   const index = state.restaurants.findIndex((item) => item.id === restaurantId);
@@ -946,10 +1148,7 @@ function bindEvents() {
   }
 
   document.addEventListener('click', (event) => {
-    if (
-      els.dietaryDropdown &&
-      !els.dietaryDropdown.contains(event.target)
-    ) {
+    if (els.dietaryDropdown && !els.dietaryDropdown.contains(event.target)) {
       els.dietaryDropdownMenu.classList.add('hidden');
     }
   });
@@ -975,7 +1174,8 @@ function bindEvents() {
     }
   });
 
-  els.useLocationBtn.addEventListener('click', () => {
+  if (els.useLocationBtn) {
+    els.useLocationBtn.addEventListener('click', () => {
     if (!navigator.geolocation) {
       showToast('Geolocation is not supported in this browser', true);
       return;
@@ -1011,27 +1211,30 @@ function bindEvents() {
           'Location access denied. You can still search by city/address/zip.';
       }
     );
-  });
+    });
+  }
 
-  els.searchLocationBtn.addEventListener('click', async () => {
-    const query = String(els.locationQuery.value || '').trim();
-    if (!query) {
-      showToast('Enter a city, address, or zip', true);
-      return;
-    }
+  if (els.searchLocationBtn) {
+    els.searchLocationBtn.addEventListener('click', async () => {
+      const query = String(els.locationQuery.value || '').trim();
+      if (!query) {
+        showToast('Enter a city, address, or zip', true);
+        return;
+      }
 
-    try {
-      els.locationStatus.textContent = 'Searching location...';
-      const location = await geocodeQuery(query);
-      state.location = { lat: location.lat, lng: location.lng };
-      state.locationLabel = query;
-      els.locationStatus.textContent = `Using ${location.label}`;
-      await resetAndReloadRestaurants();
-    } catch (err) {
-      showToast(err.message, true);
-      els.locationStatus.textContent = 'Search failed. Try another query.';
-    }
-  });
+      try {
+        els.locationStatus.textContent = 'Searching location...';
+        const location = await geocodeQuery(query);
+        state.location = { lat: location.lat, lng: location.lng };
+        state.locationLabel = query;
+        els.locationStatus.textContent = `Using ${location.label}`;
+        await resetAndReloadRestaurants();
+      } catch (err) {
+        showToast(err.message, true);
+        els.locationStatus.textContent = 'Search failed. Try another query.';
+      }
+    });
+  }
 
   els.createRestaurantForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1237,7 +1440,7 @@ async function init() {
   initTheme();
   renderAuthUI();
   bindEvents();
-  setupInfiniteScroll;
+  setupInfiniteScroll();
   updateSelectedLocationText();
   renderRestaurantList();
   renderFeedLoader();
