@@ -16,7 +16,10 @@ const SAVED_SIGNUP_PASSWORD_KEY = 'savedSignupPassword';
 function showToast(message, isError = false) {
   els.toast.textContent = message;
   els.toast.classList.remove('hidden');
-  els.toast.style.background = isError ? '#8e2410' : '#1a1f1d';
+  const styles = getComputedStyle(document.body);
+  els.toast.style.background = isError
+    ? styles.getPropertyValue('--toast-error').trim()
+    : styles.getPropertyValue('--toast-success').trim();
   window.clearTimeout(showToast.timeoutId);
   showToast.timeoutId = window.setTimeout(() => {
     els.toast.classList.add('hidden');

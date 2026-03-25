@@ -3,3 +3,8 @@ node_modules/
 *.db
 uploads/*
 !uploads/.gitkeep
+app.db*
+.DS_Store
+logs/
+*.log
+coverage/

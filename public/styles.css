@@ -7,7 +7,11 @@
   --muted: #627282;
   --primary: #2563eb;
   --primary-hover: #1d4ed8;
+  --primary-rgb: 37, 99, 235;
+  --primary-contrast: #ffffff;
   --pill: #eef2ff;
+  --toast-success: #1a1f1d;
+  --toast-error: #8e2410;
   --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
   --radius: 16px;
 }
@@ -21,7 +25,11 @@ body.dark {
   --muted: #b0b0b0;
   --primary: #888888;
   --primary-hover: #888888;
+  --primary-rgb: 136, 136, 136;
+  --primary-contrast: #121212;
   --pill: #2a2a2a;
+  --toast-success: #222222;
+  --toast-error: #6b2d2d;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
@@ -169,8 +177,8 @@ p {
 .filter-chip input:checked + span {
   background: var(--primary);
   border-color: var(--primary);
-  color: white;
-  box-shadow: 0 8px 22px rgba(37, 99, 235, 0.24);
+  color: var(--primary-contrast);
+  box-shadow: 0 8px 22px rgba(var(--primary-rgb), 0.24);
 }
 
 .clear-filters-inline {
@@ -222,7 +230,7 @@ p {
 
 #dietary-filter-focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(136, 136, 136, 0.25);
+  box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.25);
 }
 
 .restaurant-card {
@@ -360,7 +368,7 @@ input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.18);
 }
 
 textarea {
@@ -385,7 +393,7 @@ textarea {
 
 .btn-primary {
   background: var(--primary);
-  color: white;
+  color: var(--primary-contrast);
   border-color: var(--primary);
 }
 
@@ -425,6 +433,10 @@ textarea {
   border-radius: 12px;
   box-shadow: var(--shadow);
   z-index: 50;
+}
+
+.icon-pin svg circle {
+  fill: var(--surface);
 }
 
 .hidden {
