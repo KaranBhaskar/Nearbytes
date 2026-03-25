@@ -390,7 +390,7 @@ app.get('/api/restaurants/:id', optionalAuth, (req, res) => {
           WHERE restaurant_id = ? AND user_id = ?
         `
         )
-        .get(restaurantId, req.user.id)
+        .get(restaurantId, req.user.id) || null
     : null;
 
   return res.json({
