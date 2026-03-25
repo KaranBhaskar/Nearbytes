@@ -6,11 +6,15 @@ A working prototype web app for discovering nearby restaurants, viewing combined
 - Simple UI for demo
 - User Login/Registration Features
 - Dark/light mode feature
-- Add Restaurants (Admin feature)
-- Add Menu Items (Admin feature)
+- Add Restaurants (Owner feature)
+- Add Menu Items (Owner feature)
+- Edit existing restaurant information (Owner feature)
 - Use My Location feature
   
 ## Local Run
+0. Use Node.js 22 LTS (recommended) or 20 LTS.
+   - This project uses `better-sqlite3`, which may fail to install on newer Node releases without matching prebuilt binaries.
+   - On Windows, if you build native modules from source, install Visual Studio Build Tools with the Windows SDK.
 1. Create env file:
 ```bash
 cp .env.example .env 

@@ -28,6 +28,7 @@ function migrate(database) {
       phone TEXT,
       website TEXT,
       cuisine_tags TEXT,
+      dietary_tags TEXT,
       google_place_id TEXT UNIQUE,
       google_rating REAL,
       google_rating_count INTEGER NOT NULL DEFAULT 0,
@@ -75,6 +76,11 @@ function migrate(database) {
     CREATE INDEX IF NOT EXISTS idx_images_restaurant_id ON restaurant_images(restaurant_id);
     CREATE INDEX IF NOT EXISTS idx_menu_restaurant_id ON menu_items(restaurant_id);
   `);
+
+  const restaurantColumns = database.prepare("PRAGMA table_info(restaurants)").all();
+  if (!restaurantColumns.some((column) => column.name === 'dietary_tags')) {
+    database.exec('ALTER TABLE restaurants ADD COLUMN dietary_tags TEXT');
+  }
 }
 
 function getDb() {
