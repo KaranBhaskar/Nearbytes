@@ -18,6 +18,7 @@ const { haversineKm, encodeCursor, decodeCursor, combineRatings } = require('./u
 
 const app = express();
 const db = getDb();
+const APP_USER_AGENT = 'NearbyBites/1.0 (city lookup prototype)';
 
 const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -64,6 +65,43 @@ function parseCuisineTags(value) {
       .map((item) => item.trim())
       .filter(Boolean);
   }
+}
+
+function parseBoundingBox(value) {
+  if (!value) return null;
+
+  const parts = String(value)
+    .split(',')
+    .map((item) => Number(item.trim()));
+
+  if (parts.length !== 4 || parts.some((item) => !Number.isFinite(item))) {
+    return null;
+  }
+
+  return {
+    south: parts[0],
+    north: parts[1],
+    west: parts[2],
+    east: parts[3],
+  };
+}
+
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      'User-Agent': APP_USER_AGENT,
+      'Accept-Language': 'en',
+      Accept: 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`External lookup failed with status ${response.status}`);
+  }
+
+  return response.json();
 }
 
 function normalizeRestaurantRow(row) {
@@ -218,6 +256,113 @@ function updateRestaurantRecord(restaurantId, values) {
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get('/api/location/search', async (req, res) => {
+  const query = String(req.query.q || '').trim();
+
+  if (!query) {
+    return res.status(400).json({ error: 'q is required' });
+  }
+
+  try {
+    const url = new URL('https://nominatim.openstreetmap.org/search');
+    url.searchParams.set('q', query);
+    url.searchParams.set('format', 'jsonv2');
+    url.searchParams.set('limit', '1');
+    url.searchParams.set('addressdetails', '1');
+
+    const results = await fetchJson(url.toString());
+    if (!Array.isArray(results) || results.length === 0) {
+      return res.status(404).json({ error: 'Location not found' });
+    }
+
+    const best = results[0];
+
+    return res.json({
+      lat: Number(best.lat),
+      lng: Number(best.lon),
+      label: best.display_name,
+      boundingBox: Array.isArray(best.boundingbox) ? best.boundingbox.map((item) => Number(item)) : null,
+    });
+  } catch (err) {
+    return res.status(502).json({ error: err.message || 'Failed to lookup location' });
+  }
+});
+
+app.get('/api/location/reverse', async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: 'lat and lng are required numbers' });
+  }
+
+  try {
+    const url = new URL('https://nominatim.openstreetmap.org/reverse');
+    url.searchParams.set('lat', String(lat));
+    url.searchParams.set('lon', String(lng));
+    url.searchParams.set('format', 'jsonv2');
+
+    const data = await fetchJson(url.toString());
+    const address = data.address || {};
+
+    return res.json({
+      label:
+        address.city ||
+        address.town ||
+        address.village ||
+        address.state ||
+        data.display_name ||
+        'Unknown Location',
+    });
+  } catch (err) {
+    return res.status(502).json({ error: err.message || 'Failed to reverse geocode location' });
+  }
+});
+
+app.get('/api/location/restaurants', async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  const bbox = parseBoundingBox(req.query.bbox);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: 'lat and lng are required numbers' });
+  }
+
+  const query = bbox
+    ? `
+[out:json][timeout:25];
+(
+  node["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  way["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  relation["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+);
+out center tags;
+`
+    : `
+[out:json][timeout:25];
+(
+  node["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:30000,${lat},${lng});
+  way["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:30000,${lat},${lng});
+  relation["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:30000,${lat},${lng});
+);
+out center tags;
+`;
+
+  try {
+    const data = await fetchJson('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      },
+      body: new URLSearchParams({ data: query }),
+    });
+
+    return res.json({ elements: data.elements || [] });
+  } catch (err) {
+    return res.status(502).json({ error: err.message || 'Failed to load city restaurants' });
+  }
 });
 
 app.post('/api/auth/signup', (req, res) => {
