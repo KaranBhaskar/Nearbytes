@@ -31,6 +31,7 @@ function migrate(database) {
       description TEXT,
       phone TEXT,
       website TEXT,
+      opening_hours TEXT,
       cuisine_tags TEXT,
       dietary_tags TEXT,
       google_place_id TEXT UNIQUE,
@@ -84,6 +85,9 @@ function migrate(database) {
   const restaurantColumns = database.prepare("PRAGMA table_info(restaurants)").all();
   if (!restaurantColumns.some((column) => column.name === 'dietary_tags')) {
     database.exec('ALTER TABLE restaurants ADD COLUMN dietary_tags TEXT');
+  }
+  if (!restaurantColumns.some((column) => column.name === 'opening_hours')) {
+    database.exec('ALTER TABLE restaurants ADD COLUMN opening_hours TEXT');
   }
 }
 

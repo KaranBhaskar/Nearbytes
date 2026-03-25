@@ -131,6 +131,17 @@ function normalizeDietaryTag(value) {
   return normalized === 'gluten-free' || normalized === 'gluten_free' ? 'gluten-free' : normalized;
 }
 
+function expandDietaryTags(tags) {
+  const expanded = new Set((tags || []).map((tag) => normalizeDietaryTag(tag)));
+
+  // Vegan restaurants are also vegetarian for filtering purposes.
+  if (expanded.has('vegan')) {
+    expanded.add('vegetarian');
+  }
+
+  return Array.from(expanded);
+}
+
 function hasTruthyDietaryValue(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return ['yes', 'only', 'limited', 'true', '1'].includes(normalized);
@@ -173,7 +184,7 @@ function inferDietaryTags(tags = {}) {
     dietaryTags.add('gluten-free');
   }
 
-  return Array.from(dietaryTags);
+  return expandDietaryTags(Array.from(dietaryTags));
 }
 
 function restaurantMatchesDietaryFilters(restaurant, selectedFilters) {
@@ -181,7 +192,7 @@ function restaurantMatchesDietaryFilters(restaurant, selectedFilters) {
     return true;
   }
 
-  const normalizedDietaryTags = (restaurant.dietaryTags || []).map((tag) => normalizeDietaryTag(tag));
+  const normalizedDietaryTags = expandDietaryTags(restaurant.dietaryTags || []);
   const keywordSource = [
     restaurant.name,
     restaurant.description,
@@ -193,7 +204,7 @@ function restaurantMatchesDietaryFilters(restaurant, selectedFilters) {
     .join(' ')
     .toLowerCase();
 
-  return selectedFilters.some((selectedTag) => {
+  return selectedFilters.every((selectedTag) => {
     const normalizedSelectedTag = normalizeDietaryTag(selectedTag);
     const keywordVariant = normalizedSelectedTag.replace(/-/g, ' ');
 
@@ -229,47 +240,6 @@ function formatBoundingBox(boundingBox) {
   return boundingBox.join(',');
 }
 
-function normalizeExternalRestaurant(element, originLat, originLng) {
-  const tags = element.tags || {};
-  const lat = element.lat ?? element.center?.lat;
-  const lng = element.lon ?? element.center?.lon;
-  const name = String(tags.name || '').trim();
-
-  if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-    return null;
-  }
-
-  const cuisineTags = parseCuisineList(tags.cuisine);
-  const dietaryTags = inferDietaryTags(tags);
-
-  return {
-    id: `osm-${element.type}-${element.id}`,
-    ownerId: null,
-    name,
-    address: buildAddressFromTags(tags),
-    lat,
-    lng,
-    description:
-      tags.description ||
-      `Community-listed restaurant near ${state.locationLabel || 'your selected city'}.`,
-    phone: tags.phone || tags['contact:phone'] || null,
-    website: tags.website || tags['contact:website'] || null,
-    cuisineTags,
-    dietaryTags,
-    googlePlaceId: null,
-    coverImage: null,
-    googleRating: null,
-    googleRatingCount: 0,
-    appRating: null,
-    appRatingCount: 0,
-    combinedRating: null,
-    combinedRatingCount: 0,
-    distanceKm: haversineKm(originLat, originLng, lat, lng),
-    externalSource: 'openstreetmap',
-    openingHours: tags.opening_hours || null,
-  };
-}
-
 async function fetchExternalRestaurants(lat, lng) {
   const params = new URLSearchParams({
     lat: String(lat),
@@ -281,19 +251,8 @@ async function fetchExternalRestaurants(lat, lng) {
   }
 
   const data = await api(`/api/location/restaurants?${params.toString()}`);
-  const seen = new Set();
 
-  return (data.elements || [])
-    .map((element) => normalizeExternalRestaurant(element, lat, lng))
-    .filter(Boolean)
-    .filter((restaurant) => {
-      const key = `${restaurant.name.toLowerCase()}|${restaurant.address.toLowerCase()}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .sort((a, b) => a.distanceKm - b.distanceKm)
-    .slice(0, EXTERNAL_RESTAURANT_LIMIT);
+  return (data.items || []).slice(0, EXTERNAL_RESTAURANT_LIMIT);
 }
 
 function saveAuth(token, user) {
@@ -388,11 +347,6 @@ function renderRestaurantCard(restaurant) {
   card.addEventListener('click', () => {
     state.selectedRestaurantId = restaurant.id;
     renderRestaurantList();
-
-    if (restaurant.externalSource === 'openstreetmap') {
-      renderExternalRestaurantDetails(restaurant);
-      return;
-    }
 
     loadRestaurantDetails(restaurant.id).catch((err) => showToast(err.message, true));
   });
@@ -735,43 +689,6 @@ function renderReviewForm(detail, reviews) {
   `;
 }
 
-function renderExternalRestaurantDetails(restaurant) {
-  const cuisine = restaurant.cuisineTags.length
-    ? restaurant.cuisineTags.map((tag) => `<span class="metric-pill">${tag}</span>`).join('')
-    : '<span class="metric-pill">Cuisine unknown</span>';
-  const dietary = restaurant.dietaryTags.length
-    ? restaurant.dietaryTags.map((tag) => `<span class="metric-pill">${tag}</span>`).join('')
-    : '';
-  const websiteHtml = restaurant.website
-    ? `<p><a href="${restaurant.website}" target="_blank" rel="noreferrer">Website</a></p>`
-    : '';
-  const phoneHtml = restaurant.phone ? `<p><strong>Phone:</strong> ${restaurant.phone}</p>` : '';
-  const openingHoursHtml = restaurant.openingHours
-    ? `<p><strong>Hours:</strong> ${restaurant.openingHours}</p>`
-    : '';
-
-  els.detailsPanel.innerHTML = `
-    <h2>${restaurant.name}</h2>
-    <p class="muted">${restaurant.address}</p>
-    <p>${restaurant.description}</p>
-
-    <div class="metrics">
-      <span class="metric-pill">${restaurant.distanceKm.toFixed(2)} km away</span>
-      <span class="metric-pill">OpenStreetMap</span>
-      ${cuisine}
-      ${dietary}
-    </div>
-
-    <h3>Information</h3>
-    <div>
-      ${phoneHtml}
-      ${websiteHtml}
-      ${openingHoursHtml}
-      <p class="muted">This restaurant was found using Nominatim + Overpass for the selected city.</p>
-    </div>
-  `;
-}
-
 async function loadRestaurantDetails(restaurantId) {
   const [detail, reviewsData] = await Promise.all([
     api(`/api/restaurants/${restaurantId}`),
@@ -782,6 +699,11 @@ async function loadRestaurantDetails(restaurantId) {
   const images = detail.images || [];
   const menuItems = detail.menuItems || [];
   const reviews = reviewsData.reviews || [];
+  const phoneHtml = restaurant.phone ? `<p><strong>Phone:</strong> ${restaurant.phone}</p>` : '';
+  const websiteHtml = restaurant.website
+    ? `<p><strong>Website:</strong> <a href="${restaurant.website}" target="_blank" rel="noreferrer">${restaurant.website}</a></p>`
+    : '';
+  const hoursHtml = restaurant.openingHours ? `<p><strong>Hours:</strong> ${restaurant.openingHours}</p>` : '';
 
   els.detailsPanel.innerHTML = `
     <h2>${restaurant.name}</h2>
@@ -803,6 +725,14 @@ async function loadRestaurantDetails(restaurantId) {
         restaurant.googleRatingCount
       )}</span>
       <span class="metric-pill">App: ${ratingText(restaurant.appRating, restaurant.appRatingCount)}</span>
+    </div>
+
+    <h3>Information</h3>
+    <div>
+      <p><strong>Address:</strong> ${restaurant.address}</p>
+      ${phoneHtml}
+      ${websiteHtml}
+      ${hoursHtml}
     </div>
 
     <h3>Gallery</h3>
@@ -1064,15 +994,6 @@ function bindEvents() {
     });
   }
 
-<<<<<<< HEAD
-  document.addEventListener('click', (event) => {
-    if (els.dietaryDropdown && !els.dietaryDropdown.contains(event.target)) {
-      els.dietaryDropdownMenu.classList.add('hidden');
-    }
-  });
-
-=======
->>>>>>> visual-updates
   els.themeToggleBtn.addEventListener('click', () => {
     const isDark = document.body.classList.contains('dark');
     applyTheme(isDark ? 'light' : 'dark');
@@ -1093,78 +1014,6 @@ function bindEvents() {
       loadRestaurantDetails(state.selectedRestaurantId).catch((err) => showToast(err.message, true));
     }
   });
-
-<<<<<<< HEAD
-  if (els.useLocationBtn) {
-    els.useLocationBtn.addEventListener('click', () => {
-    if (!navigator.geolocation) {
-      showToast('Geolocation is not supported in this browser', true);
-      return;
-    }
-
-=======
->>>>>>> visual-updates
-    els.locationStatus.textContent = 'Getting your location...';
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        state.location = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        };
-        state.locationBoundingBox = null;
-        
-        reverseGeocode(position.coords.latitude, position.coords.longitude)
-          .then((city) => {
-            state.locationLabel = city;
-            els.locationStatus.textContent = `Showing restaurants near ${city}`;
-          })
-          .catch(() => {
-            state.locationLabel = 'Your current location';
-            els.locationStatus.textContent = 'Using your current location';
-          });
-
-        try {
-          await resetAndReloadRestaurants();
-        } catch (err) {
-          showToast(err.message, true);
-        }
-      },
-      (error) => {
-        showToast(error.message || 'Unable to retrieve your location', true);
-        els.locationStatus.textContent =
-          'Location access denied. You can still search by city/address/zip.';
-      }
-    );
-<<<<<<< HEAD
-    });
-  }
-
-  if (els.searchLocationBtn) {
-    els.searchLocationBtn.addEventListener('click', async () => {
-      const query = String(els.locationQuery.value || '').trim();
-      if (!query) {
-        showToast('Enter a city, address, or zip', true);
-        return;
-      }
-
-      try {
-        els.locationStatus.textContent = 'Searching location...';
-        const location = await geocodeQuery(query);
-        state.location = { lat: location.lat, lng: location.lng };
-        state.locationBoundingBox = location.boundingBox || null;
-        state.locationLabel = query;
-        els.locationStatus.textContent = `Using ${location.label}`;
-        await resetAndReloadRestaurants();
-      } catch (err) {
-        showToast(err.message, true);
-        els.locationStatus.textContent = 'Search failed. Try another query.';
-      }
-    });
-  }
-
-=======
-    
->>>>>>> visual-updates
   els.createRestaurantForm.addEventListener('submit', async (event) => {
     event.preventDefault();
 

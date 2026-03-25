@@ -86,6 +86,82 @@ function parseBoundingBox(value) {
   };
 }
 
+function normalizeTagList(value) {
+  return String(value || '')
+    .split(/[;,]/)
+    .map((item) => String(item).trim())
+    .filter(Boolean);
+}
+
+function hasTruthyDietaryValue(value) {
+  return ['yes', 'only', 'limited', 'true', '1'].includes(String(value || '').trim().toLowerCase());
+}
+
+function inferExternalDietaryTags(tags = {}) {
+  const dietaryTags = new Set();
+  const searchableText = Object.values(tags).filter(Boolean).join(' ').toLowerCase();
+  const cuisineText = String(tags.cuisine || '').toLowerCase();
+
+  if (hasTruthyDietaryValue(tags['diet:vegan']) || searchableText.includes('vegan')) dietaryTags.add('vegan');
+  if (
+    hasTruthyDietaryValue(tags['diet:vegetarian']) ||
+    cuisineText.includes('vegetarian') ||
+    searchableText.includes('vegetarian')
+  ) dietaryTags.add('vegetarian');
+  if (hasTruthyDietaryValue(tags['diet:halal']) || searchableText.includes('halal')) dietaryTags.add('halal');
+  if (hasTruthyDietaryValue(tags['diet:kosher']) || searchableText.includes('kosher')) dietaryTags.add('kosher');
+  if (
+    hasTruthyDietaryValue(tags['diet:gluten_free']) ||
+    hasTruthyDietaryValue(tags['diet:gluten-free']) ||
+    searchableText.includes('gluten free') ||
+    searchableText.includes('gluten-free')
+  ) dietaryTags.add('gluten-free');
+
+  return Array.from(dietaryTags);
+}
+
+function buildExternalAddress(tags = {}) {
+  const parts = [
+    tags['addr:housenumber'],
+    tags['addr:street'],
+    tags['addr:city'] || tags['addr:town'] || tags['addr:village'],
+    tags['addr:state'],
+    tags['addr:postcode'],
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+,/g, ',')
+    .trim();
+
+  return parts || tags['addr:full'] || 'Address not available';
+}
+
+function normalizeExternalRestaurantElement(element, originLat, originLng) {
+  const tags = element.tags || {};
+  const lat = Number(element.lat ?? element.center?.lat);
+  const lng = Number(element.lon ?? element.center?.lon);
+  const name = String(tags.name || '').trim();
+
+  if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
+
+  return {
+    externalPlaceId: `osm:${element.type}:${element.id}`,
+    name,
+    address: buildExternalAddress(tags),
+    lat,
+    lng,
+    description: tags.description || null,
+    phone: tags.phone || tags['contact:phone'] || null,
+    website: tags.website || tags['contact:website'] || null,
+    openingHours: tags.opening_hours || null,
+    cuisineTags: normalizeTagList(tags.cuisine),
+    dietaryTags: inferExternalDietaryTags(tags),
+    distanceKm: haversineKm(originLat, originLng, lat, lng),
+  };
+}
+
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, {
     ...options,
@@ -102,6 +178,79 @@ async function fetchJson(url, options = {}) {
   }
 
   return response.json();
+}
+
+function upsertExternalRestaurant(restaurant) {
+  const existing = db
+    .prepare(
+      `
+      SELECT id
+      FROM restaurants
+      WHERE google_place_id = ?
+    `
+    )
+    .get(restaurant.externalPlaceId);
+
+  if (existing) {
+    db.prepare(
+      `
+      UPDATE restaurants
+      SET
+        name = ?,
+        address = ?,
+        lat = ?,
+        lng = ?,
+        description = COALESCE(?, description),
+        phone = COALESCE(?, phone),
+        website = COALESCE(?, website),
+        opening_hours = COALESCE(?, opening_hours),
+        cuisine_tags = ?,
+        dietary_tags = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `
+    ).run(
+      restaurant.name,
+      restaurant.address,
+      restaurant.lat,
+      restaurant.lng,
+      restaurant.description,
+      restaurant.phone,
+      restaurant.website,
+      restaurant.openingHours,
+      JSON.stringify(restaurant.cuisineTags),
+      JSON.stringify(restaurant.dietaryTags),
+      existing.id
+    );
+
+    return existing.id;
+  }
+
+  const info = db.prepare(
+    `
+    INSERT INTO restaurants(
+      owner_id, name, address, lat, lng, description, phone, website, opening_hours, cuisine_tags, dietary_tags,
+      google_place_id, google_rating, google_rating_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `
+  ).run(
+    null,
+    restaurant.name,
+    restaurant.address,
+    restaurant.lat,
+    restaurant.lng,
+    restaurant.description,
+    restaurant.phone,
+    restaurant.website,
+    restaurant.openingHours,
+    JSON.stringify(restaurant.cuisineTags),
+    JSON.stringify(restaurant.dietaryTags),
+    restaurant.externalPlaceId,
+    null,
+    0
+  );
+
+  return Number(info.lastInsertRowid);
 }
 
 function normalizeRestaurantRow(row) {
@@ -121,6 +270,7 @@ function normalizeRestaurantRow(row) {
     description: row.description,
     phone: row.phone,
     website: row.website,
+    openingHours: row.opening_hours || null,
     cuisineTags: parseCuisineTags(row.cuisine_tags),
     dietaryTags: parseCuisineTags(row.dietary_tags),
     googlePlaceId: row.google_place_id,
@@ -324,42 +474,63 @@ app.get('/api/location/reverse', async (req, res) => {
 app.get('/api/location/restaurants', async (req, res) => {
   const lat = Number(req.query.lat);
   const lng = Number(req.query.lng);
-  const bbox = parseBoundingBox(req.query.bbox);
 
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return res.status(400).json({ error: 'lat and lng are required numbers' });
   }
 
-  const query = bbox
-    ? `
+  try {
+    const seen = new Set();
+    const radiusSteps = [5000, 10000, 20000];
+    let normalizedRestaurants = [];
+
+    for (const radiusMeters of radiusSteps) {
+      const query = `
 [out:json][timeout:25];
 (
-  node["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
-  way["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
-  relation["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
-);
-out center tags;
-`
-    : `
-[out:json][timeout:25];
-(
-  node["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:30000,${lat},${lng});
-  way["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:30000,${lat},${lng});
-  relation["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:30000,${lat},${lng});
+  node["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:${radiusMeters},${lat},${lng});
+  way["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:${radiusMeters},${lat},${lng});
+  relation["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:${radiusMeters},${lat},${lng});
 );
 out center tags;
 `;
 
-  try {
-    const data = await fetchJson('https://overpass-api.de/api/interpreter', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-      },
-      body: new URLSearchParams({ data: query }),
-    });
+      const data = await fetchJson('https://overpass-api.de/api/interpreter', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        },
+        body: new URLSearchParams({ data: query }),
+      });
 
-    return res.json({ elements: data.elements || [] });
+      normalizedRestaurants = (data.elements || [])
+        .map((element) => normalizeExternalRestaurantElement(element, lat, lng))
+        .filter(Boolean)
+        .filter((restaurant) => {
+          const key = `${restaurant.name.toLowerCase()}|${restaurant.address.toLowerCase()}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+
+      if (normalizedRestaurants.length >= 12) {
+        break;
+      }
+    }
+
+    const items = normalizedRestaurants
+      .sort((a, b) => a.distanceKm - b.distanceKm)
+      .slice(0, 40)
+      .map((restaurant) => {
+        const restaurantId = upsertExternalRestaurant(restaurant);
+        return {
+          ...getRestaurantWithAggregates(restaurantId),
+          distanceKm: restaurant.distanceKm,
+          externalSource: 'openstreetmap',
+        };
+      });
+
+    return res.json({ items });
   } catch (err) {
     return res.status(502).json({ error: err.message || 'Failed to load city restaurants' });
   }
