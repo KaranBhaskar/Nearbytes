@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nearby Bites</title>
     <link rel="stylesheet" href="/styles.css" />
+    <link 
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+      />
   </head>
   <body>
     <div class="app-shell">
@@ -22,36 +28,108 @@
         </div>
       </header>
 
-      <section class="location-bar card">
-        <h2>Find restaurants near you</h2>
-        <div class="location-actions">
-          <button id="use-location" class="btn btn-primary">Use My Location</button>
-          <input id="location-query" type="text" placeholder="Enter city, address, or zip" />
-          <button id="search-location" class="btn btn-outline">Search</button>
-        </div>
-        <div class="dietary-filters">
-          <div class="restaurant-filters">
-            <label class="filter-label">Dietary:</label>
+      <div id="location-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+          <div class="modal-header">
+            <div>
+              <h2>Choose a location</h2>
+              <p class="muted">Use your browser location, search manually, or place a pin on the map.</p>
+            </div>
+            <button id="close-location-modal" class="btn btn-outline" type="button">Close</button>
+          </div>
 
-            <div class="multi-filter-dropdown" id="dietary-dropdown">
-              <button type="button" id="dietary-dropdown-toggle" class="dropdown-toggle">
-                All ▼
+          <div class="modal-controls">
+            <button id="use-browser-location" class="btn btn-primary" type="button">
+              Use My Current Location
+            </button>
+
+            <div class="modal-search-row">
+              <input
+                id="modal-location-query"
+                type="text"
+                placeholder="Search city, address, or zip"
+              />
+              <button id="modal-search-location" class="btn btn-outline" type="button">
+                Search
               </button>
-
-              <div id="dietary-dropdown-menu" class="dropdown-menu hidden">
-                <label><input type="checkbox" name="dietary-filter" value="Vegan" /> Vegan</label>
-                <label><input type="checkbox" name="dietary-filter" value="Halal" /> Halal</label>
-                <label><input type="checkbox" name="dietary-filter" value="Gluten free" /> Gluten-Free</label>
-                <label><input type="checkbox" name="dietary-filter" value="Vegetarian" /> Vegetarian</label>
-                <label><input type="checkbox" name="dietary-filter" value="Kosher" /> Kosher</label>
-
-                <button type="button" id="clear-filters" class="btn btn-outline clear-filters-btn">
-                  Clear Filters
-                </button>
-              </div>
             </div>
           </div>
-        <p id="location-status" class="muted">Set your location to discover nearby restaurants.</p>
+
+          <div id="location-map" class="location-map"></div>
+
+          <div class="modal-footer">
+            <p id="map-selection-status" class="muted">
+              Click on the map or search for a place to select a location.
+            </p>
+            <button id="confirm-location" class="btn btn-primary" type="button">
+              Confirm Location
+            </button>
+          </div>
+        </div>
+      </div>
+
+
+
+      <section class="location-bar card">
+        <div class="location-header-row">
+          <div>
+            <h2>Find restaurants near you</h2>
+            <p id="location-status" class="muted">
+              Set your location to discover nearby restaurants.
+            </p>
+          </div>
+
+          <button id="open-location-modal" class="btn btn-primary icon-btn" type="button" aria-label="Choose location">
+            <span class="icon-pin" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M12 21s6-5.686 6-11a6 6 0 1 0-12 0c0 5.314 6 11 6 11Z"
+                  fill="currentColor"
+                />
+                <circle cx="12" cy="10" r="2.8" fill="white" />
+              </svg>
+            </span>
+            <span>Choose Location</span>
+          </button>
+        </div>
+
+        <div class="selected-location-bar">
+          <span class="selected-location-label">Selected area:</span>
+          <span id="selected-location-text" class="selected-location-value">None selected</span>
+        </div>
+
+        <div class="dietary-filters">
+          <span class="filter-label">Dietary:</span>
+
+          <label class="filter-chip">
+            <input type="checkbox" name="dietary-filter" value="Vegan" />
+            <span>Vegan</span>
+          </label>
+
+          <label class="filter-chip">
+            <input type="checkbox" name="dietary-filter" value="Halal" />
+            <span>Halal</span>
+          </label>
+
+          <label class="filter-chip">
+            <input type="checkbox" name="dietary-filter" value="Gluten free" />
+            <span>Gluten-Free</span>
+          </label>
+
+          <label class="filter-chip">
+            <input type="checkbox" name="dietary-filter" value="Vegetarian" />
+            <span>Vegetarian</span>
+          </label>
+
+          <label class="filter-chip">
+            <input type="checkbox" name="dietary-filter" value="Kosher" />
+            <span>Kosher</span>
+          </label>
+
+          <button type="button" id="clear-filters" class="btn btn-outline clear-filters-inline">
+            Clear Filters
+          </button>
+        </div>
       </section>
 
       <main class="layout">
@@ -135,6 +213,11 @@
 
     <div id="toast" class="toast hidden"></div>
 
-    <script src="/app.js"></script>
+    <script
+        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""
+      ></script>
+      <script src="/app.js"></script>
   </body>
 </html>

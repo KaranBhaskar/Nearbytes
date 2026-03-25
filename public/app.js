@@ -11,6 +11,7 @@ const state = {
   ownerRestaurants: [],
   selectedOwnerRestaurantId: null,
   dietaryFilters: [],
+  pendingMapLocation: null,
 };
 
 const demoRestaurants = [
@@ -54,9 +55,15 @@ const els = {
   openAuthBtn: document.getElementById('open-auth'),
   logoutBtn: document.getElementById('logout-btn'),
   themeToggleBtn: document.getElementById('theme-toggle'),
-  useLocationBtn: document.getElementById('use-location'),
-  searchLocationBtn: document.getElementById('search-location'),
-  locationQuery: document.getElementById('location-query'),
+  openLocationModalBtn: document.getElementById('open-location-modal'),
+  selectedLocationText: document.getElementById('selected-location-text'),
+  locationModal: document.getElementById('location-modal'),
+  closeLocationModalBtn: document.getElementById('close-location-modal'),
+  useBrowserLocationBtn: document.getElementById('use-browser-location'),
+  modalLocationQuery: document.getElementById('modal-location-query'),
+  modalSearchLocationBtn: document.getElementById('modal-search-location'),
+  mapSelectionStatus: document.getElementById('map-selection-status'),
+  confirmLocationBtn: document.getElementById('confirm-location'),
   locationStatus: document.getElementById('location-status'),
   feedMeta: document.getElementById('feed-meta'),
   list: document.getElementById('restaurant-list'),
@@ -74,13 +81,12 @@ const els = {
   imageRestaurantSelect: document.getElementById('image-restaurant-select'),
   menuRestaurantSelect: document.getElementById('menu-restaurant-select'),
   dietaryFilterInputs: Array.from(document.querySelectorAll('input[name="dietary-filter"]')),
-  dietaryDropdown: document.getElementById('dietary-dropdown'),
-  dietaryDropdownToggle: document.getElementById('dietary-dropdown-toggle'),
-  dietaryDropdownMenu: document.getElementById('dietary-dropdown-menu'),
   clearFiltersBtn: document.getElementById('clear-filters'),
 };
 
 let observer;
+let locationMap = null;
+let locationMarker = null;
 
 function showToast(message, isError = false) {
   els.toast.textContent = message;
@@ -330,6 +336,156 @@ async function reverseGeocode(lat, lng) {
     address.state ||
     'Unknown Location'
   );
+}
+
+function updateSelectedLocationText() {
+  els.selectedLocationText.textContent = state.locationLabel || 'None selected';
+}
+
+function openLocationModal() {
+  els.locationModal.classList.remove('hidden');
+
+  window.setTimeout(() => {
+    initLocationMap();
+  }, 0);
+}
+
+function closeLocationModal() {
+  els.locationModal.classList.add('hidden');
+}
+
+function setPendingMapLocation(lat, lng, label = null) {
+  state.pendingMapLocation = { lat, lng, label };
+
+  if (!locationMarker) {
+    locationMarker = L.marker([lat, lng], { draggable: true }).addTo(locationMap);
+
+    locationMarker.on('dragend', async () => {
+      const pos = locationMarker.getLatLng();
+      state.pendingMapLocation = {
+        lat: pos.lat,
+        lng: pos.lng,
+        label: state.pendingMapLocation?.label || 'Dropped pin location',
+      };
+
+      try {
+        const readable = await reverseGeocode(pos.lat, pos.lng);
+        state.pendingMapLocation.label = readable;
+        els.mapSelectionStatus.textContent = `Selected: ${readable}`;
+      } catch (_err) {
+        els.mapSelectionStatus.textContent = `Selected pin at ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
+      }
+    });
+  } else {
+    locationMarker.setLatLng([lat, lng]);
+  }
+
+  locationMap.setView([lat, lng], 14);
+  els.mapSelectionStatus.textContent = label
+    ? `Selected: ${label}`
+    : `Selected pin at ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+}
+
+function initLocationMap() {
+  if (!locationMap) {
+    locationMap = L.map('location-map').setView([37.7749, -122.4194], 12);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(locationMap);
+
+    locationMap.on('click', async (event) => {
+      const { lat, lng } = event.latlng;
+      setPendingMapLocation(lat, lng);
+
+      try {
+        const readable = await reverseGeocode(lat, lng);
+        state.pendingMapLocation.label = readable;
+        els.mapSelectionStatus.textContent = `Selected: ${readable}`;
+      } catch (_err) {
+        els.mapSelectionStatus.textContent = `Selected pin at ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      }
+    });
+  }
+
+  window.setTimeout(() => {
+    locationMap.invalidateSize();
+  }, 100);
+
+  if (state.location) {
+    setPendingMapLocation(state.location.lat, state.location.lng, state.locationLabel || 'Current selection');
+  }
+}
+
+async function useBrowserLocationInModal() {
+  if (!navigator.geolocation) {
+    showToast('Geolocation is not supported in this browser', true);
+    return;
+  }
+
+  els.mapSelectionStatus.textContent = 'Getting your location...';
+
+  navigator.geolocation.getCurrentPosition(
+    async (position) => {
+      const lat = position.coords.latitude;
+      const lng = position.coords.longitude;
+
+      try {
+        const readable = await reverseGeocode(lat, lng);
+        setPendingMapLocation(lat, lng, readable);
+        state.pendingMapLocation.label = readable;
+      } catch (_err) {
+        setPendingMapLocation(lat, lng, 'Your current location');
+      }
+    },
+    (error) => {
+      showToast(error.message || 'Unable to retrieve your location', true);
+      els.mapSelectionStatus.textContent =
+        'Location access denied. Search manually or click the map to place a pin.';
+    }
+  );
+}
+
+async function searchLocationInModal() {
+  const query = String(els.modalLocationQuery.value || '').trim();
+
+  if (!query) {
+    showToast('Enter a city, address, or zip', true);
+    return;
+  }
+
+  try {
+    els.mapSelectionStatus.textContent = 'Searching location...';
+    const location = await geocodeQuery(query);
+    setPendingMapLocation(location.lat, location.lng, location.label);
+    state.pendingMapLocation.label = location.label;
+  } catch (err) {
+    showToast(err.message, true);
+    els.mapSelectionStatus.textContent = 'Search failed. Try another query.';
+  }
+}
+
+async function confirmSelectedLocation() {
+  if (!state.pendingMapLocation) {
+    showToast('Choose a location on the map first', true);
+    return;
+  }
+
+  state.location = {
+    lat: state.pendingMapLocation.lat,
+    lng: state.pendingMapLocation.lng,
+  };
+
+  state.locationLabel = state.pendingMapLocation.label || 'Selected area';
+  els.locationStatus.textContent = `Showing restaurants near ${state.locationLabel}`;
+  updateSelectedLocationText();
+  closeLocationModal();
+
+  try {
+    await resetAndReloadRestaurants();
+  } catch (err) {
+    showToast(err.message, true);
+  }
 }
 
 function setupInfiniteScroll() {
@@ -719,29 +875,43 @@ function initTheme() {
   applyTheme(prefersDark ? 'dark' : 'light');
 }
 
-function updateDietaryDropdownLabel() {
-  const selected = els.dietaryFilterInputs
-    .filter((input) => input.checked)
-    .map((input) => input.value);
-
-  if (selected.length === 0) {
-    els.dietaryDropdownToggle.textContent = 'All ▼';
-    return;
-  }
-
-  els.dietaryDropdownToggle.textContent = `${selected.join(', ')} ▼`;
-}
-
 function bindEvents() {
   els.openAuthBtn.addEventListener('click', () => {
     navigateToAuthPage();
   });
 
-    if (els.dietaryDropdownToggle) {
-    els.dietaryDropdownToggle.addEventListener('click', () => {
-      els.dietaryDropdownMenu.classList.toggle('hidden');
-    });
-  }
+  els.openLocationModalBtn.addEventListener('click', () => {
+    openLocationModal();
+  });
+
+  els.closeLocationModalBtn.addEventListener('click', () => {
+    closeLocationModal();
+  });
+
+  els.locationModal.addEventListener('click', (event) => {
+    if (event.target === els.locationModal) {
+      closeLocationModal();
+    }
+  });
+
+  els.useBrowserLocationBtn.addEventListener('click', async () => {
+    await useBrowserLocationInModal();
+  });
+
+  els.modalSearchLocationBtn.addEventListener('click', async () => {
+    await searchLocationInModal();
+  });
+
+  els.modalLocationQuery.addEventListener('keydown', async (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      await searchLocationInModal();
+    }
+  });
+
+  els.confirmLocationBtn.addEventListener('click', async () => {
+    await confirmSelectedLocation();
+  });
 
   if (els.dietaryFilterInputs.length) {
     els.dietaryFilterInputs.forEach((input) => {
@@ -749,8 +919,6 @@ function bindEvents() {
         state.dietaryFilters = els.dietaryFilterInputs
           .filter((item) => item.checked)
           .map((item) => item.value);
-
-        updateDietaryDropdownLabel();
 
         if (state.location) {
           await resetAndReloadRestaurants();
@@ -768,8 +936,6 @@ function bindEvents() {
       });
 
       state.dietaryFilters = [];
-      updateDietaryDropdownLabel();
-      els.dietaryDropdownMenu.classList.add('hidden');
 
       if (state.location) {
         await resetAndReloadRestaurants();
@@ -1070,10 +1236,13 @@ async function resetAndReloadRestaurants() {
 async function init() {
   initTheme();
   renderAuthUI();
+  bindEvents();
+  setupInfiniteScroll;
+  updateSelectedLocationText();
   renderRestaurantList();
   renderFeedLoader();
-  bindEvents();
-  setupInfiniteScroll();
+  // bindEvents();
+  // setupInfiniteScroll();
 
   state.location = { lat: 37.7937, lng: -122.395 };
   state.locationLabel = 'San Francisco (default)';
