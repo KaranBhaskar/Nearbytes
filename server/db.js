@@ -3,6 +3,10 @@ const Database = require('better-sqlite3');
 
 let db;
 
+function getDbPath() {
+  return process.env.DB_PATH || path.join(process.cwd(), 'app.db');
+}
+
 function migrate(database) {
   database.exec(`
     PRAGMA foreign_keys = ON;
@@ -86,11 +90,21 @@ function migrate(database) {
 function getDb() {
   if (db) return db;
 
-  const dbPath = path.join(process.cwd(), 'app.db');
-  db = new Database(dbPath);
+  db = new Database(getDbPath());
   db.pragma('journal_mode = WAL');
   migrate(db);
   return db;
 }
 
-module.exports = { getDb };
+function closeDb() {
+  if (!db) return;
+
+  db.close();
+  db = null;
+}
+
+module.exports = {
+  closeDb,
+  getDb,
+  getDbPath,
+};
