@@ -1064,12 +1064,15 @@ function bindEvents() {
     });
   }
 
+<<<<<<< HEAD
   document.addEventListener('click', (event) => {
     if (els.dietaryDropdown && !els.dietaryDropdown.contains(event.target)) {
       els.dietaryDropdownMenu.classList.add('hidden');
     }
   });
 
+=======
+>>>>>>> visual-updates
   els.themeToggleBtn.addEventListener('click', () => {
     const isDark = document.body.classList.contains('dark');
     applyTheme(isDark ? 'light' : 'dark');
@@ -1091,6 +1094,7 @@ function bindEvents() {
     }
   });
 
+<<<<<<< HEAD
   if (els.useLocationBtn) {
     els.useLocationBtn.addEventListener('click', () => {
     if (!navigator.geolocation) {
@@ -1098,6 +1102,8 @@ function bindEvents() {
       return;
     }
 
+=======
+>>>>>>> visual-updates
     els.locationStatus.textContent = 'Getting your location...';
     navigator.geolocation.getCurrentPosition(
       async (position) => {
@@ -1129,6 +1135,7 @@ function bindEvents() {
           'Location access denied. You can still search by city/address/zip.';
       }
     );
+<<<<<<< HEAD
     });
   }
 
@@ -1155,6 +1162,9 @@ function bindEvents() {
     });
   }
 
+=======
+    
+>>>>>>> visual-updates
   els.createRestaurantForm.addEventListener('submit', async (event) => {
     event.preventDefault();
 
