@@ -3,13 +3,18 @@
 A working prototype web app for discovering nearby restaurants, viewing combined ratings (Google + app reviews), and role-based actions for customers and restaurant owners.
 
 ## Features Implemented
-- Simple UI for demo
+- Updated UI for demo (Mar 25, 2026)
 - User Login/Registration Features
 - Dark/light mode feature
 - Add Restaurants (Owner feature)
 - Add Menu Items (Owner feature)
-- Edit existing restaurant information (Owner feature)
-- Use My Location feature
+- Edit existing restaurant Information (Owner feature)
+- Use My Location feature Improved
+- Location Selection Improved
+- New filter system that filters by dietary restrictions
+- User reviews feature
+- Edit Restaurant Information (Owner feature)
+- View Restaurant Details (Menu, Ratings, Reviews)
   
 ## Local Run
 0. Use Node.js 22 LTS (recommended) or 20 LTS.
