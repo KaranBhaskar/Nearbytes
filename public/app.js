@@ -945,15 +945,6 @@ function bindEvents() {
     });
   }
 
-  document.addEventListener('click', (event) => {
-    if (
-      els.dietaryDropdown &&
-      !els.dietaryDropdown.contains(event.target)
-    ) {
-      els.dietaryDropdownMenu.classList.add('hidden');
-    }
-  });
-
   els.themeToggleBtn.addEventListener('click', () => {
     const isDark = document.body.classList.contains('dark');
     applyTheme(isDark ? 'light' : 'dark');
@@ -974,12 +965,6 @@ function bindEvents() {
       loadRestaurantDetails(state.selectedRestaurantId).catch((err) => showToast(err.message, true));
     }
   });
-
-  els.useLocationBtn.addEventListener('click', () => {
-    if (!navigator.geolocation) {
-      showToast('Geolocation is not supported in this browser', true);
-      return;
-    }
 
     els.locationStatus.textContent = 'Getting your location...';
     navigator.geolocation.getCurrentPosition(
@@ -1011,28 +996,7 @@ function bindEvents() {
           'Location access denied. You can still search by city/address/zip.';
       }
     );
-  });
-
-  els.searchLocationBtn.addEventListener('click', async () => {
-    const query = String(els.locationQuery.value || '').trim();
-    if (!query) {
-      showToast('Enter a city, address, or zip', true);
-      return;
-    }
-
-    try {
-      els.locationStatus.textContent = 'Searching location...';
-      const location = await geocodeQuery(query);
-      state.location = { lat: location.lat, lng: location.lng };
-      state.locationLabel = query;
-      els.locationStatus.textContent = `Using ${location.label}`;
-      await resetAndReloadRestaurants();
-    } catch (err) {
-      showToast(err.message, true);
-      els.locationStatus.textContent = 'Search failed. Try another query.';
-    }
-  });
-
+    
   els.createRestaurantForm.addEventListener('submit', async (event) => {
     event.preventDefault();
 
@@ -1237,7 +1201,7 @@ async function init() {
   initTheme();
   renderAuthUI();
   bindEvents();
-  setupInfiniteScroll;
+  setupInfiniteScroll();
   updateSelectedLocationText();
   renderRestaurantList();
   renderFeedLoader();
