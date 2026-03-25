@@ -1,26 +1,31 @@
-require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const express = require('express');
-const bcrypt = require('bcryptjs');
-const multer = require('multer');
-const { getDb } = require('./db');
-const { syncGoogleNearby } = require('./googlePlaces');
+require("dotenv").config();
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const express = require("express");
+const bcrypt = require("bcryptjs");
+const multer = require("multer");
+const { getDb } = require("./db");
+const { syncGoogleNearby } = require("./googlePlaces");
 const {
   generateToken,
   sanitizeUser,
   optionalAuth,
   requireAuth,
   requireRole,
-} = require('./auth');
-const { haversineKm, encodeCursor, decodeCursor, combineRatings } = require('./utils');
+} = require("./auth");
+const {
+  haversineKm,
+  encodeCursor,
+  decodeCursor,
+  combineRatings,
+} = require("./utils");
 
 const app = express();
 const db = getDb();
-const APP_USER_AGENT = 'NearbyBites/1.0 (city lookup prototype)';
+const APP_USER_AGENT = "NearbyBites/1.0 (city lookup prototype)";
 
-const uploadsDir = path.join(process.cwd(), 'uploads');
+const uploadsDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -28,7 +33,7 @@ if (!fs.existsSync(uploadsDir)) {
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsDir),
   filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || '').slice(0, 10);
+    const ext = path.extname(file.originalname || "").slice(0, 10);
     cb(null, `${Date.now()}-${crypto.randomUUID()}${ext}`);
   },
 });
@@ -40,18 +45,18 @@ const upload = multer({
     files: 10,
   },
   fileFilter: (_req, file, cb) => {
-    if (!file.mimetype.startsWith('image/')) {
-      return cb(new Error('Only image uploads are allowed'));
+    if (!file.mimetype.startsWith("image/")) {
+      return cb(new Error("Only image uploads are allowed"));
     }
 
     return cb(null, true);
   },
 });
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static(uploadsDir));
-app.use(express.static(path.join(process.cwd(), 'public')));
+app.use("/uploads", express.static(uploadsDir));
+app.use(express.static(path.join(process.cwd(), "public")));
 
 function parseCuisineTags(value) {
   if (!value) return [];
@@ -61,7 +66,7 @@ function parseCuisineTags(value) {
     return Array.isArray(parsed) ? parsed : [];
   } catch (_err) {
     return String(value)
-      .split(',')
+      .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
   }
@@ -71,7 +76,7 @@ function parseBoundingBox(value) {
   if (!value) return null;
 
   const parts = String(value)
-    .split(',')
+    .split(",")
     .map((item) => Number(item.trim()));
 
   if (parts.length !== 4 || parts.some((item) => !Number.isFinite(item))) {
@@ -87,60 +92,81 @@ function parseBoundingBox(value) {
 }
 
 function normalizeTagList(value) {
-  return String(value || '')
+  return String(value || "")
     .split(/[;,]/)
     .map((item) => String(item).trim())
     .filter(Boolean);
 }
 
 function hasTruthyDietaryValue(value) {
-  return ['yes', 'only', 'limited', 'true', '1'].includes(String(value || '').trim().toLowerCase());
+  return ["yes", "only", "limited", "true", "1"].includes(
+    String(value || "")
+      .trim()
+      .toLowerCase()
+  );
 }
 
 function inferExternalDietaryTags(tags = {}) {
   const dietaryTags = new Set();
-  const searchableText = Object.values(tags).filter(Boolean).join(' ').toLowerCase();
-  const cuisineText = String(tags.cuisine || '').toLowerCase();
+  const searchableText = Object.values(tags)
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const cuisineText = String(tags.cuisine || "").toLowerCase();
 
-  if (hasTruthyDietaryValue(tags['diet:vegan']) || searchableText.includes('vegan')) dietaryTags.add('vegan');
   if (
-    hasTruthyDietaryValue(tags['diet:vegetarian']) ||
-    cuisineText.includes('vegetarian') ||
-    searchableText.includes('vegetarian')
-  ) dietaryTags.add('vegetarian');
-  if (hasTruthyDietaryValue(tags['diet:halal']) || searchableText.includes('halal')) dietaryTags.add('halal');
-  if (hasTruthyDietaryValue(tags['diet:kosher']) || searchableText.includes('kosher')) dietaryTags.add('kosher');
+    hasTruthyDietaryValue(tags["diet:vegan"]) ||
+    searchableText.includes("vegan")
+  )
+    dietaryTags.add("vegan");
   if (
-    hasTruthyDietaryValue(tags['diet:gluten_free']) ||
-    hasTruthyDietaryValue(tags['diet:gluten-free']) ||
-    searchableText.includes('gluten free') ||
-    searchableText.includes('gluten-free')
-  ) dietaryTags.add('gluten-free');
+    hasTruthyDietaryValue(tags["diet:vegetarian"]) ||
+    cuisineText.includes("vegetarian") ||
+    searchableText.includes("vegetarian")
+  )
+    dietaryTags.add("vegetarian");
+  if (
+    hasTruthyDietaryValue(tags["diet:halal"]) ||
+    searchableText.includes("halal")
+  )
+    dietaryTags.add("halal");
+  if (
+    hasTruthyDietaryValue(tags["diet:kosher"]) ||
+    searchableText.includes("kosher")
+  )
+    dietaryTags.add("kosher");
+  if (
+    hasTruthyDietaryValue(tags["diet:gluten_free"]) ||
+    hasTruthyDietaryValue(tags["diet:gluten-free"]) ||
+    searchableText.includes("gluten free") ||
+    searchableText.includes("gluten-free")
+  )
+    dietaryTags.add("gluten-free");
 
   return Array.from(dietaryTags);
 }
 
 function buildExternalAddress(tags = {}) {
   const parts = [
-    tags['addr:housenumber'],
-    tags['addr:street'],
-    tags['addr:city'] || tags['addr:town'] || tags['addr:village'],
-    tags['addr:state'],
-    tags['addr:postcode'],
+    tags["addr:housenumber"],
+    tags["addr:street"],
+    tags["addr:city"] || tags["addr:town"] || tags["addr:village"],
+    tags["addr:state"],
+    tags["addr:postcode"],
   ]
     .filter(Boolean)
-    .join(' ')
-    .replace(/\s+,/g, ',')
+    .join(" ")
+    .replace(/\s+,/g, ",")
     .trim();
 
-  return parts || tags['addr:full'] || 'Address not available';
+  return parts || tags["addr:full"] || "Address not available";
 }
 
 function normalizeExternalRestaurantElement(element, originLat, originLng) {
   const tags = element.tags || {};
   const lat = Number(element.lat ?? element.center?.lat);
   const lng = Number(element.lon ?? element.center?.lon);
-  const name = String(tags.name || '').trim();
+  const name = String(tags.name || "").trim();
 
   if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) {
     return null;
@@ -153,8 +179,8 @@ function normalizeExternalRestaurantElement(element, originLat, originLng) {
     lat,
     lng,
     description: tags.description || null,
-    phone: tags.phone || tags['contact:phone'] || null,
-    website: tags.website || tags['contact:website'] || null,
+    phone: tags.phone || tags["contact:phone"] || null,
+    website: tags.website || tags["contact:website"] || null,
     openingHours: tags.opening_hours || null,
     cuisineTags: normalizeTagList(tags.cuisine),
     dietaryTags: inferExternalDietaryTags(tags),
@@ -166,9 +192,9 @@ async function fetchJson(url, options = {}) {
   const response = await fetch(url, {
     ...options,
     headers: {
-      'User-Agent': APP_USER_AGENT,
-      'Accept-Language': 'en',
-      Accept: 'application/json',
+      "User-Agent": APP_USER_AGENT,
+      "Accept-Language": "en",
+      Accept: "application/json",
       ...(options.headers || {}),
     },
   });
@@ -226,29 +252,31 @@ function upsertExternalRestaurant(restaurant) {
     return existing.id;
   }
 
-  const info = db.prepare(
-    `
+  const info = db
+    .prepare(
+      `
     INSERT INTO restaurants(
       owner_id, name, address, lat, lng, description, phone, website, opening_hours, cuisine_tags, dietary_tags,
       google_place_id, google_rating, google_rating_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `
-  ).run(
-    null,
-    restaurant.name,
-    restaurant.address,
-    restaurant.lat,
-    restaurant.lng,
-    restaurant.description,
-    restaurant.phone,
-    restaurant.website,
-    restaurant.openingHours,
-    JSON.stringify(restaurant.cuisineTags),
-    JSON.stringify(restaurant.dietaryTags),
-    restaurant.externalPlaceId,
-    null,
-    0
-  );
+    )
+    .run(
+      null,
+      restaurant.name,
+      restaurant.address,
+      restaurant.lat,
+      restaurant.lng,
+      restaurant.description,
+      restaurant.phone,
+      restaurant.website,
+      restaurant.openingHours,
+      JSON.stringify(restaurant.cuisineTags),
+      JSON.stringify(restaurant.dietaryTags),
+      restaurant.externalPlaceId,
+      null,
+      0
+    );
 
   return Number(info.lastInsertRowid);
 }
@@ -256,9 +284,15 @@ function upsertExternalRestaurant(restaurant) {
 function normalizeRestaurantRow(row) {
   const appAvg = row.app_avg == null ? null : Number(row.app_avg);
   const appCount = Number(row.app_count || 0);
-  const googleAvg = row.google_rating == null ? null : Number(row.google_rating);
+  const googleAvg =
+    row.google_rating == null ? null : Number(row.google_rating);
   const googleCount = Number(row.google_rating_count || 0);
-  const { combinedAvg, combinedCount } = combineRatings(googleAvg, googleCount, appAvg, appCount);
+  const { combinedAvg, combinedCount } = combineRatings(
+    googleAvg,
+    googleCount,
+    appAvg,
+    appCount
+  );
 
   return {
     id: row.id,
@@ -322,33 +356,43 @@ function parseRestaurantPayload(body, existing = null) {
   const rawCuisineTags = body.cuisineTags;
   const rawDietaryTags = body.dietaryTags;
 
-  const nextName = rawName == null ? existing && existing.name : String(rawName).trim();
-  const nextAddress = rawAddress == null ? existing && existing.address : String(rawAddress).trim();
+  const nextName =
+    rawName == null ? existing && existing.name : String(rawName).trim();
+  const nextAddress =
+    rawAddress == null
+      ? existing && existing.address
+      : String(rawAddress).trim();
   const nextLat = rawLat == null ? existing && existing.lat : Number(rawLat);
   const nextLng = rawLng == null ? existing && existing.lng : Number(rawLng);
 
   if (!nextName || !nextAddress || nextLat == null || nextLng == null) {
-    return { error: 'name, address, lat and lng are required' };
+    return { error: "name, address, lat and lng are required" };
   }
 
   if (!Number.isFinite(nextLat) || !Number.isFinite(nextLng)) {
-    return { error: 'lat and lng must be valid numbers' };
+    return { error: "lat and lng must be valid numbers" };
   }
 
   const tagsSource =
-    rawCuisineTags == null && existing ? parseCuisineTags(existing.cuisine_tags) : rawCuisineTags;
+    rawCuisineTags == null && existing
+      ? parseCuisineTags(existing.cuisine_tags)
+      : rawCuisineTags;
   const cuisineTags = Array.isArray(tagsSource)
     ? tagsSource.map((item) => String(item).trim()).filter(Boolean)
-    : String(tagsSource || '')
-        .split(',')
+    : String(tagsSource || "")
+        .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
   const dietarySource =
-    rawDietaryTags == null && existing ? parseCuisineTags(existing.dietary_tags) : rawDietaryTags;
+    rawDietaryTags == null && existing
+      ? parseCuisineTags(existing.dietary_tags)
+      : rawDietaryTags;
   const dietaryTags = Array.isArray(dietarySource)
-    ? dietarySource.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
-    : String(dietarySource || '')
-        .split(',')
+    ? dietarySource
+        .map((item) => String(item).trim().toLowerCase())
+        .filter(Boolean)
+    : String(dietarySource || "")
+        .split(",")
         .map((item) => item.trim().toLowerCase())
         .filter(Boolean);
 
@@ -364,9 +408,18 @@ function parseRestaurantPayload(body, existing = null) {
             ? existing.description
             : null
           : String(rawDescription).trim() || null,
-      phone: rawPhone == null ? (existing ? existing.phone : null) : String(rawPhone).trim() || null,
+      phone:
+        rawPhone == null
+          ? existing
+            ? existing.phone
+            : null
+          : String(rawPhone).trim() || null,
       website:
-        rawWebsite == null ? (existing ? existing.website : null) : String(rawWebsite).trim() || null,
+        rawWebsite == null
+          ? existing
+            ? existing.website
+            : null
+          : String(rawWebsite).trim() || null,
       cuisineTags,
       dietaryTags,
     },
@@ -404,27 +457,27 @@ function updateRestaurantRecord(restaurantId, values) {
   );
 }
 
-app.get('/api/health', (_req, res) => {
+app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/location/search', async (req, res) => {
-  const query = String(req.query.q || '').trim();
+app.get("/api/location/search", async (req, res) => {
+  const query = String(req.query.q || "").trim();
 
   if (!query) {
-    return res.status(400).json({ error: 'q is required' });
+    return res.status(400).json({ error: "q is required" });
   }
 
   try {
-    const url = new URL('https://nominatim.openstreetmap.org/search');
-    url.searchParams.set('q', query);
-    url.searchParams.set('format', 'jsonv2');
-    url.searchParams.set('limit', '1');
-    url.searchParams.set('addressdetails', '1');
+    const url = new URL("https://nominatim.openstreetmap.org/search");
+    url.searchParams.set("q", query);
+    url.searchParams.set("format", "jsonv2");
+    url.searchParams.set("limit", "1");
+    url.searchParams.set("addressdetails", "1");
 
     const results = await fetchJson(url.toString());
     if (!Array.isArray(results) || results.length === 0) {
-      return res.status(404).json({ error: 'Location not found' });
+      return res.status(404).json({ error: "Location not found" });
     }
 
     const best = results[0];
@@ -433,26 +486,30 @@ app.get('/api/location/search', async (req, res) => {
       lat: Number(best.lat),
       lng: Number(best.lon),
       label: best.display_name,
-      boundingBox: Array.isArray(best.boundingbox) ? best.boundingbox.map((item) => Number(item)) : null,
+      boundingBox: Array.isArray(best.boundingbox)
+        ? best.boundingbox.map((item) => Number(item))
+        : null,
     });
   } catch (err) {
-    return res.status(502).json({ error: err.message || 'Failed to lookup location' });
+    return res
+      .status(502)
+      .json({ error: err.message || "Failed to lookup location" });
   }
 });
 
-app.get('/api/location/reverse', async (req, res) => {
+app.get("/api/location/reverse", async (req, res) => {
   const lat = Number(req.query.lat);
   const lng = Number(req.query.lng);
 
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    return res.status(400).json({ error: 'lat and lng are required numbers' });
+    return res.status(400).json({ error: "lat and lng are required numbers" });
   }
 
   try {
-    const url = new URL('https://nominatim.openstreetmap.org/reverse');
-    url.searchParams.set('lat', String(lat));
-    url.searchParams.set('lon', String(lng));
-    url.searchParams.set('format', 'jsonv2');
+    const url = new URL("https://nominatim.openstreetmap.org/reverse");
+    url.searchParams.set("lat", String(lat));
+    url.searchParams.set("lon", String(lng));
+    url.searchParams.set("format", "jsonv2");
 
     const data = await fetchJson(url.toString());
     const address = data.address || {};
@@ -464,19 +521,21 @@ app.get('/api/location/reverse', async (req, res) => {
         address.village ||
         address.state ||
         data.display_name ||
-        'Unknown Location',
+        "Unknown Location",
     });
   } catch (err) {
-    return res.status(502).json({ error: err.message || 'Failed to reverse geocode location' });
+    return res
+      .status(502)
+      .json({ error: err.message || "Failed to reverse geocode location" });
   }
 });
 
-app.get('/api/location/restaurants', async (req, res) => {
+app.get("/api/location/restaurants", async (req, res) => {
   const lat = Number(req.query.lat);
   const lng = Number(req.query.lng);
 
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    return res.status(400).json({ error: 'lat and lng are required numbers' });
+    return res.status(400).json({ error: "lat and lng are required numbers" });
   }
 
   try {
@@ -495,10 +554,10 @@ app.get('/api/location/restaurants', async (req, res) => {
 out center tags;
 `;
 
-      const data = await fetchJson('https://overpass-api.de/api/interpreter', {
-        method: 'POST',
+      const data = await fetchJson("https://overpass-api.de/api/interpreter", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
         },
         body: new URLSearchParams({ data: query }),
       });
@@ -526,85 +585,101 @@ out center tags;
         return {
           ...getRestaurantWithAggregates(restaurantId),
           distanceKm: restaurant.distanceKm,
-          externalSource: 'openstreetmap',
+          externalSource: "openstreetmap",
         };
       });
 
     return res.json({ items });
   } catch (err) {
-    return res.status(502).json({ error: err.message || 'Failed to load city restaurants' });
+    return res
+      .status(502)
+      .json({ error: err.message || "Failed to load city restaurants" });
   }
 });
 
-app.post('/api/auth/signup', (req, res) => {
+app.post("/api/auth/signup", (req, res) => {
   const { name, email, password, role } = req.body;
 
   if (!name || !email || !password || !role) {
-    return res.status(400).json({ error: 'name, email, password, and role are required' });
+    return res
+      .status(400)
+      .json({ error: "name, email, password, and role are required" });
   }
 
-  if (!['customer', 'owner'].includes(role)) {
-    return res.status(400).json({ error: 'role must be customer or owner' });
+  if (!["customer", "owner"].includes(role)) {
+    return res.status(400).json({ error: "role must be customer or owner" });
   }
 
   if (String(password).length < 8) {
-    return res.status(400).json({ error: 'password must be at least 8 characters' });
+    return res
+      .status(400)
+      .json({ error: "password must be at least 8 characters" });
   }
 
   const normalizedEmail = String(email).trim().toLowerCase();
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(normalizedEmail);
+  const existing = db
+    .prepare("SELECT id FROM users WHERE email = ?")
+    .get(normalizedEmail);
   if (existing) {
-    return res.status(409).json({ error: 'email already in use' });
+    return res.status(409).json({ error: "email already in use" });
   }
 
   const passwordHash = bcrypt.hashSync(password, 10);
   const info = db
-    .prepare('INSERT INTO users(name, email, password_hash, role) VALUES (?, ?, ?, ?)')
+    .prepare(
+      "INSERT INTO users(name, email, password_hash, role) VALUES (?, ?, ?, ?)"
+    )
     .run(String(name).trim(), normalizedEmail, passwordHash, role);
 
-  const user = db.prepare('SELECT id, name, email, role FROM users WHERE id = ?').get(info.lastInsertRowid);
+  const user = db
+    .prepare("SELECT id, name, email, role FROM users WHERE id = ?")
+    .get(info.lastInsertRowid);
   const token = generateToken(user);
 
   return res.status(201).json({ token, user: sanitizeUser(user) });
 });
 
-app.post('/api/auth/login', (req, res) => {
+app.post("/api/auth/login", (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
-    return res.status(400).json({ error: 'email and password are required' });
+    return res.status(400).json({ error: "email and password are required" });
   }
 
   const normalizedEmail = String(email).trim().toLowerCase();
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail);
+  const user = db
+    .prepare("SELECT * FROM users WHERE email = ?")
+    .get(normalizedEmail);
   if (!user) {
-    return res.status(401).json({ error: 'invalid credentials' });
+    return res.status(401).json({ error: "invalid credentials" });
   }
 
   const isValid = bcrypt.compareSync(password, user.password_hash);
   if (!isValid) {
-    return res.status(401).json({ error: 'invalid credentials' });
+    return res.status(401).json({ error: "invalid credentials" });
   }
 
   const token = generateToken(user);
   return res.json({ token, user: sanitizeUser(user) });
 });
 
-app.post('/api/auth/logout', (_req, res) => {
+app.post("/api/auth/logout", (_req, res) => {
   return res.json({ ok: true });
 });
 
-app.get('/api/restaurants/nearby', async (req, res) => {
+app.get("/api/restaurants/nearby", async (req, res) => {
   const lat = Number(req.query.lat);
   const lng = Number(req.query.lng);
 
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    return res.status(400).json({ error: 'lat and lng query params are required numbers' });
+    return res
+      .status(400)
+      .json({ error: "lat and lng query params are required numbers" });
   }
 
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
   const offset = decodeCursor(req.query.cursor);
-  const dietaryFilters = String(req.query.dietary || '')
-    .split(',')
+  const dietaryFilters = String(req.query.dietary || "")
+    .split(",")
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
 
@@ -613,7 +688,7 @@ app.get('/api/restaurants/nearby', async (req, res) => {
   } catch (err) {
     // Continue with local data if Google sync fails.
     // eslint-disable-next-line no-console
-    console.warn('Google sync failed:', err.message);
+    console.warn("Google sync failed:", err.message);
   }
 
   const rows = db
@@ -646,7 +721,9 @@ app.get('/api/restaurants/nearby', async (req, res) => {
       };
     })
     .filter((restaurant) =>
-      dietaryFilters.every((tag) => restaurant.dietaryTags.map((item) => item.toLowerCase()).includes(tag))
+      dietaryFilters.every((tag) =>
+        restaurant.dietaryTags.map((item) => item.toLowerCase()).includes(tag)
+      )
     )
     .sort((a, b) => a.distanceKm - b.distanceKm);
 
@@ -662,20 +739,20 @@ app.get('/api/restaurants/nearby', async (req, res) => {
   });
 });
 
-app.get('/api/restaurants/:id', optionalAuth, (req, res) => {
+app.get("/api/restaurants/:id", optionalAuth, (req, res) => {
   const restaurantId = Number(req.params.id);
   if (!Number.isFinite(restaurantId)) {
-    return res.status(400).json({ error: 'invalid restaurant id' });
+    return res.status(400).json({ error: "invalid restaurant id" });
   }
 
   const restaurant = getRestaurantWithAggregates(restaurantId);
   if (!restaurant) {
-    return res.status(404).json({ error: 'restaurant not found' });
+    return res.status(404).json({ error: "restaurant not found" });
   }
 
   const images = db
     .prepare(
-      'SELECT id, url, is_cover AS isCover, created_at AS createdAt FROM restaurant_images WHERE restaurant_id = ? ORDER BY is_cover DESC, id DESC'
+      "SELECT id, url, is_cover AS isCover, created_at AS createdAt FROM restaurant_images WHERE restaurant_id = ? ORDER BY is_cover DESC, id DESC"
     )
     .all(restaurantId);
 
@@ -717,10 +794,10 @@ app.get('/api/restaurants/:id', optionalAuth, (req, res) => {
   });
 });
 
-app.get('/api/restaurants/:id/reviews', (req, res) => {
+app.get("/api/restaurants/:id/reviews", (req, res) => {
   const restaurantId = Number(req.params.id);
   if (!Number.isFinite(restaurantId)) {
-    return res.status(400).json({ error: 'invalid restaurant id' });
+    return res.status(400).json({ error: "invalid restaurant id" });
   }
 
   const reviews = db
@@ -745,26 +822,33 @@ app.get('/api/restaurants/:id/reviews', (req, res) => {
   return res.json({ reviews });
 });
 
-app.post('/api/restaurants/:id/reviews', requireAuth, requireRole('customer'), (req, res) => {
-  const restaurantId = Number(req.params.id);
-  const rating = Number(req.body.rating);
-  const comment = req.body.comment == null ? null : String(req.body.comment).trim();
+app.post(
+  "/api/restaurants/:id/reviews",
+  requireAuth,
+  requireRole("customer"),
+  (req, res) => {
+    const restaurantId = Number(req.params.id);
+    const rating = Number(req.body.rating);
+    const comment =
+      req.body.comment == null ? null : String(req.body.comment).trim();
 
-  if (!Number.isFinite(restaurantId)) {
-    return res.status(400).json({ error: 'invalid restaurant id' });
-  }
+    if (!Number.isFinite(restaurantId)) {
+      return res.status(400).json({ error: "invalid restaurant id" });
+    }
 
-  if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
-    return res.status(400).json({ error: 'rating must be between 1 and 5' });
-  }
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: "rating must be between 1 and 5" });
+    }
 
-  const exists = db.prepare('SELECT id FROM restaurants WHERE id = ?').get(restaurantId);
-  if (!exists) {
-    return res.status(404).json({ error: 'restaurant not found' });
-  }
+    const exists = db
+      .prepare("SELECT id FROM restaurants WHERE id = ?")
+      .get(restaurantId);
+    if (!exists) {
+      return res.status(404).json({ error: "restaurant not found" });
+    }
 
-  db.prepare(
-    `
+    db.prepare(
+      `
     INSERT INTO reviews(restaurant_id, user_id, rating, comment)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(restaurant_id, user_id)
@@ -773,90 +857,108 @@ app.post('/api/restaurants/:id/reviews', requireAuth, requireRole('customer'), (
       comment = excluded.comment,
       updated_at = CURRENT_TIMESTAMP
   `
-  ).run(restaurantId, req.user.id, Math.round(rating), comment);
+    ).run(restaurantId, req.user.id, Math.round(rating), comment);
 
-  const review = db
-    .prepare(
-      `
+    const review = db
+      .prepare(
+        `
       SELECT id, rating, comment, created_at AS createdAt, updated_at AS updatedAt
       FROM reviews
       WHERE restaurant_id = ? AND user_id = ?
     `
-    )
-    .get(restaurantId, req.user.id);
+      )
+      .get(restaurantId, req.user.id);
 
-  return res.status(201).json({ review });
-});
-
-app.put('/api/restaurants/:id/reviews/:reviewId', requireAuth, requireRole('customer'), (req, res) => {
-  const restaurantId = Number(req.params.id);
-  const reviewId = Number(req.params.reviewId);
-  const rating = Number(req.body.rating);
-  const comment = req.body.comment == null ? null : String(req.body.comment).trim();
-
-  if (!Number.isFinite(restaurantId) || !Number.isFinite(reviewId)) {
-    return res.status(400).json({ error: 'invalid id' });
+    return res.status(201).json({ review });
   }
+);
 
-  if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
-    return res.status(400).json({ error: 'rating must be between 1 and 5' });
+app.put(
+  "/api/restaurants/:id/reviews/:reviewId",
+  requireAuth,
+  requireRole("customer"),
+  (req, res) => {
+    const restaurantId = Number(req.params.id);
+    const reviewId = Number(req.params.reviewId);
+    const rating = Number(req.body.rating);
+    const comment =
+      req.body.comment == null ? null : String(req.body.comment).trim();
+
+    if (!Number.isFinite(restaurantId) || !Number.isFinite(reviewId)) {
+      return res.status(400).json({ error: "invalid id" });
+    }
+
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: "rating must be between 1 and 5" });
+    }
+
+    const review = db
+      .prepare("SELECT * FROM reviews WHERE id = ? AND restaurant_id = ?")
+      .get(reviewId, restaurantId);
+
+    if (!review) {
+      return res.status(404).json({ error: "review not found" });
+    }
+
+    if (review.user_id !== req.user.id) {
+      return res
+        .status(403)
+        .json({ error: "you can only edit your own review" });
+    }
+
+    db.prepare(
+      "UPDATE reviews SET rating = ?, comment = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+    ).run(Math.round(rating), comment, reviewId);
+
+    const updated = db
+      .prepare(
+        "SELECT id, rating, comment, created_at AS createdAt, updated_at AS updatedAt FROM reviews WHERE id = ?"
+      )
+      .get(reviewId);
+
+    return res.json({ review: updated });
   }
+);
 
-  const review = db
-    .prepare('SELECT * FROM reviews WHERE id = ? AND restaurant_id = ?')
-    .get(reviewId, restaurantId);
+app.delete(
+  "/api/restaurants/:id/reviews/:reviewId",
+  requireAuth,
+  requireRole("customer"),
+  (req, res) => {
+    const restaurantId = Number(req.params.id);
+    const reviewId = Number(req.params.reviewId);
 
-  if (!review) {
-    return res.status(404).json({ error: 'review not found' });
+    if (!Number.isFinite(restaurantId) || !Number.isFinite(reviewId)) {
+      return res.status(400).json({ error: "invalid id" });
+    }
+
+    const review = db
+      .prepare("SELECT * FROM reviews WHERE id = ? AND restaurant_id = ?")
+      .get(reviewId, restaurantId);
+
+    if (!review) {
+      return res.status(404).json({ error: "review not found" });
+    }
+
+    if (review.user_id !== req.user.id) {
+      return res
+        .status(403)
+        .json({ error: "you can only delete your own review" });
+    }
+
+    db.prepare("DELETE FROM reviews WHERE id = ?").run(reviewId);
+    return res.json({ ok: true });
   }
+);
 
-  if (review.user_id !== req.user.id) {
-    return res.status(403).json({ error: 'you can only edit your own review' });
-  }
-
-  db.prepare('UPDATE reviews SET rating = ?, comment = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
-    Math.round(rating),
-    comment,
-    reviewId
-  );
-
-  const updated = db
-    .prepare(
-      'SELECT id, rating, comment, created_at AS createdAt, updated_at AS updatedAt FROM reviews WHERE id = ?'
-    )
-    .get(reviewId);
-
-  return res.json({ review: updated });
-});
-
-app.delete('/api/restaurants/:id/reviews/:reviewId', requireAuth, requireRole('customer'), (req, res) => {
-  const restaurantId = Number(req.params.id);
-  const reviewId = Number(req.params.reviewId);
-
-  if (!Number.isFinite(restaurantId) || !Number.isFinite(reviewId)) {
-    return res.status(400).json({ error: 'invalid id' });
-  }
-
-  const review = db
-    .prepare('SELECT * FROM reviews WHERE id = ? AND restaurant_id = ?')
-    .get(reviewId, restaurantId);
-
-  if (!review) {
-    return res.status(404).json({ error: 'review not found' });
-  }
-
-  if (review.user_id !== req.user.id) {
-    return res.status(403).json({ error: 'you can only delete your own review' });
-  }
-
-  db.prepare('DELETE FROM reviews WHERE id = ?').run(reviewId);
-  return res.json({ ok: true });
-});
-
-app.get('/api/owner/restaurants', requireAuth, requireRole('owner'), (req, res) => {
-  const restaurants = db
-    .prepare(
-      `
+app.get(
+  "/api/owner/restaurants",
+  requireAuth,
+  requireRole("owner"),
+  (req, res) => {
+    const restaurants = db
+      .prepare(
+        `
       SELECT
         r.*,
         COUNT(DISTINCT m.id) AS menuItemCount,
@@ -868,126 +970,146 @@ app.get('/api/owner/restaurants', requireAuth, requireRole('owner'), (req, res) 
       GROUP BY r.id
       ORDER BY r.created_at DESC
     `
-    )
-    .all(req.user.id)
-    .map((row) => ({
-      ...normalizeRestaurantRow(row),
-      menuItemCount: Number(row.menuItemCount || 0),
-      imageCount: Number(row.imageCount || 0),
-    }));
+      )
+      .all(req.user.id)
+      .map((row) => ({
+        ...normalizeRestaurantRow(row),
+        menuItemCount: Number(row.menuItemCount || 0),
+        imageCount: Number(row.imageCount || 0),
+      }));
 
-  return res.json({ restaurants });
-});
-
-app.post('/api/owner/restaurants', requireAuth, requireRole('owner'), (req, res) => {
-  const parsed = parseRestaurantPayload(req.body);
-  if (parsed.error) {
-    return res.status(400).json({ error: parsed.error });
+    return res.json({ restaurants });
   }
+);
 
-  const { values } = parsed;
+app.post(
+  "/api/owner/restaurants",
+  requireAuth,
+  requireRole("owner"),
+  (req, res) => {
+    const parsed = parseRestaurantPayload(req.body);
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
 
-  const info = db
-    .prepare(
-      `
+    const { values } = parsed;
+
+    const info = db
+      .prepare(
+        `
       INSERT INTO restaurants(
         owner_id, name, address, lat, lng, description, phone, website, cuisine_tags, dietary_tags,
         google_place_id, google_rating, google_rating_count
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
-    )
-    .run(
-      req.user.id,
-      values.name,
-      values.address,
-      values.lat,
-      values.lng,
-      values.description,
-      values.phone,
-      values.website,
-      JSON.stringify(values.cuisineTags),
-      JSON.stringify(values.dietaryTags),
-      null,
-      null,
-      0
-    );
+      )
+      .run(
+        req.user.id,
+        values.name,
+        values.address,
+        values.lat,
+        values.lng,
+        values.description,
+        values.phone,
+        values.website,
+        JSON.stringify(values.cuisineTags),
+        JSON.stringify(values.dietaryTags),
+        null,
+        null,
+        0
+      );
 
-  const restaurant = getRestaurantWithAggregates(info.lastInsertRowid);
-  return res.status(201).json({ restaurant });
-});
-
-app.put('/api/owner/restaurants/:id', requireAuth, requireRole('owner'), (req, res) => {
-  const restaurantId = Number(req.params.id);
-  if (!Number.isFinite(restaurantId)) {
-    return res.status(400).json({ error: 'invalid restaurant id' });
+    const restaurant = getRestaurantWithAggregates(info.lastInsertRowid);
+    return res.status(201).json({ restaurant });
   }
+);
 
-  const existing = db
-    .prepare('SELECT * FROM restaurants WHERE id = ? AND owner_id = ?')
-    .get(restaurantId, req.user.id);
-
-  if (!existing) {
-    return res.status(404).json({ error: 'owned restaurant not found' });
-  }
-
-  const parsed = parseRestaurantPayload(req.body, existing);
-  if (parsed.error) {
-    return res.status(400).json({ error: parsed.error });
-  }
-
-  updateRestaurantRecord(restaurantId, parsed.values);
-
-  const restaurant = getRestaurantWithAggregates(restaurantId);
-  return res.json({ restaurant });
-});
-
-app.delete('/api/owner/restaurants/:id', requireAuth, requireRole('owner'), (req, res) => {
-  const restaurantId = Number(req.params.id);
-  if (!Number.isFinite(restaurantId)) {
-    return res.status(400).json({ error: 'invalid restaurant id' });
-  }
-
-  const existing = db
-    .prepare('SELECT id FROM restaurants WHERE id = ? AND owner_id = ?')
-    .get(restaurantId, req.user.id);
-
-  if (!existing) {
-    return res.status(404).json({ error: 'owned restaurant not found' });
-  }
-
-  db.prepare('DELETE FROM restaurants WHERE id = ?').run(restaurantId);
-  return res.json({ ok: true });
-});
-
-app.post(
-  '/api/owner/restaurants/:id/images',
+app.put(
+  "/api/owner/restaurants/:id",
   requireAuth,
-  requireRole('owner'),
-  upload.array('images', 10),
+  requireRole("owner"),
   (req, res) => {
     const restaurantId = Number(req.params.id);
     if (!Number.isFinite(restaurantId)) {
-      return res.status(400).json({ error: 'invalid restaurant id' });
+      return res.status(400).json({ error: "invalid restaurant id" });
     }
 
     const existing = db
-      .prepare('SELECT id FROM restaurants WHERE id = ? AND owner_id = ?')
+      .prepare("SELECT * FROM restaurants WHERE id = ? AND owner_id = ?")
       .get(restaurantId, req.user.id);
 
     if (!existing) {
-      return res.status(404).json({ error: 'owned restaurant not found' });
+      return res.status(404).json({ error: "owned restaurant not found" });
+    }
+
+    const parsed = parseRestaurantPayload(req.body, existing);
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
+    updateRestaurantRecord(restaurantId, parsed.values);
+
+    const restaurant = getRestaurantWithAggregates(restaurantId);
+    return res.json({ restaurant });
+  }
+);
+
+app.delete(
+  "/api/owner/restaurants/:id",
+  requireAuth,
+  requireRole("owner"),
+  (req, res) => {
+    const restaurantId = Number(req.params.id);
+    if (!Number.isFinite(restaurantId)) {
+      return res.status(400).json({ error: "invalid restaurant id" });
+    }
+
+    const existing = db
+      .prepare("SELECT id FROM restaurants WHERE id = ? AND owner_id = ?")
+      .get(restaurantId, req.user.id);
+
+    if (!existing) {
+      return res.status(404).json({ error: "owned restaurant not found" });
+    }
+
+    db.prepare("DELETE FROM restaurants WHERE id = ?").run(restaurantId);
+    return res.json({ ok: true });
+  }
+);
+
+app.post(
+  "/api/owner/restaurants/:id/images",
+  requireAuth,
+  requireRole("owner"),
+  upload.array("images", 10),
+  (req, res) => {
+    const restaurantId = Number(req.params.id);
+    if (!Number.isFinite(restaurantId)) {
+      return res.status(400).json({ error: "invalid restaurant id" });
+    }
+
+    const existing = db
+      .prepare("SELECT id FROM restaurants WHERE id = ? AND owner_id = ?")
+      .get(restaurantId, req.user.id);
+
+    if (!existing) {
+      return res.status(404).json({ error: "owned restaurant not found" });
     }
 
     if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ error: 'at least one image file is required' });
+      return res
+        .status(400)
+        .json({ error: "at least one image file is required" });
     }
 
     const hasCover = db
-      .prepare('SELECT id FROM restaurant_images WHERE restaurant_id = ? AND is_cover = 1')
+      .prepare(
+        "SELECT id FROM restaurant_images WHERE restaurant_id = ? AND is_cover = 1"
+      )
       .get(restaurantId);
 
     const insert = db.prepare(
-      'INSERT INTO restaurant_images(restaurant_id, url, is_cover) VALUES (?, ?, ?)'
+      "INSERT INTO restaurant_images(restaurant_id, url, is_cover) VALUES (?, ?, ?)"
     );
 
     const inserted = [];
@@ -995,7 +1117,11 @@ app.post(
       const isCover = !hasCover && index === 0 ? 1 : 0;
       const url = `/uploads/${file.filename}`;
       const info = insert.run(restaurantId, url, isCover);
-      inserted.push({ id: info.lastInsertRowid, url, isCover: Boolean(isCover) });
+      inserted.push({
+        id: info.lastInsertRowid,
+        url,
+        isCover: Boolean(isCover),
+      });
     });
 
     return res.status(201).json({ images: inserted });
@@ -1003,35 +1129,37 @@ app.post(
 );
 
 app.post(
-  '/api/owner/restaurants/:id/menu-items',
+  "/api/owner/restaurants/:id/menu-items",
   requireAuth,
-  requireRole('owner'),
-  upload.single('image'),
+  requireRole("owner"),
+  upload.single("image"),
   (req, res) => {
     const restaurantId = Number(req.params.id);
     if (!Number.isFinite(restaurantId)) {
-      return res.status(400).json({ error: 'invalid restaurant id' });
+      return res.status(400).json({ error: "invalid restaurant id" });
     }
 
     const owned = db
-      .prepare('SELECT id FROM restaurants WHERE id = ? AND owner_id = ?')
+      .prepare("SELECT id FROM restaurants WHERE id = ? AND owner_id = ?")
       .get(restaurantId, req.user.id);
 
     if (!owned) {
-      return res.status(404).json({ error: 'owned restaurant not found' });
+      return res.status(404).json({ error: "owned restaurant not found" });
     }
 
     const { name, description, price } = req.body;
     const parsedPrice = Number(price);
 
     if (!name || !Number.isFinite(parsedPrice) || parsedPrice < 0) {
-      return res.status(400).json({ error: 'name and non-negative price are required' });
+      return res
+        .status(400)
+        .json({ error: "name and non-negative price are required" });
     }
 
     const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
     const info = db
       .prepare(
-        'INSERT INTO menu_items(restaurant_id, name, description, price, image_url) VALUES (?, ?, ?, ?, ?)'
+        "INSERT INTO menu_items(restaurant_id, name, description, price, image_url) VALUES (?, ?, ?, ?, ?)"
       )
       .run(
         restaurantId,
@@ -1043,7 +1171,7 @@ app.post(
 
     const item = db
       .prepare(
-        'SELECT id, name, description, price, image_url AS imageUrl, created_at AS createdAt, updated_at AS updatedAt FROM menu_items WHERE id = ?'
+        "SELECT id, name, description, price, image_url AS imageUrl, created_at AS createdAt, updated_at AS updatedAt FROM menu_items WHERE id = ?"
       )
       .get(info.lastInsertRowid);
 
@@ -1052,48 +1180,56 @@ app.post(
 );
 
 app.put(
-  '/api/owner/restaurants/:id/menu-items/:itemId',
+  "/api/owner/restaurants/:id/menu-items/:itemId",
   requireAuth,
-  requireRole('owner'),
-  upload.single('image'),
+  requireRole("owner"),
+  upload.single("image"),
   (req, res) => {
     const restaurantId = Number(req.params.id);
     const itemId = Number(req.params.itemId);
 
     if (!Number.isFinite(restaurantId) || !Number.isFinite(itemId)) {
-      return res.status(400).json({ error: 'invalid ids' });
+      return res.status(400).json({ error: "invalid ids" });
     }
 
     const owned = db
-      .prepare('SELECT id FROM restaurants WHERE id = ? AND owner_id = ?')
+      .prepare("SELECT id FROM restaurants WHERE id = ? AND owner_id = ?")
       .get(restaurantId, req.user.id);
 
     if (!owned) {
-      return res.status(404).json({ error: 'owned restaurant not found' });
+      return res.status(404).json({ error: "owned restaurant not found" });
     }
 
     const existingItem = db
-      .prepare('SELECT * FROM menu_items WHERE id = ? AND restaurant_id = ?')
+      .prepare("SELECT * FROM menu_items WHERE id = ? AND restaurant_id = ?")
       .get(itemId, restaurantId);
 
     if (!existingItem) {
-      return res.status(404).json({ error: 'menu item not found' });
+      return res.status(404).json({ error: "menu item not found" });
     }
 
-    const nextName = req.body.name ? String(req.body.name).trim() : existingItem.name;
+    const nextName = req.body.name
+      ? String(req.body.name).trim()
+      : existingItem.name;
     const nextDescription =
-      req.body.description == null ? existingItem.description : String(req.body.description).trim();
+      req.body.description == null
+        ? existingItem.description
+        : String(req.body.description).trim();
     const nextPrice =
       req.body.price == null
         ? existingItem.price
         : Number.isFinite(Number(req.body.price))
-          ? Number(req.body.price)
-          : existingItem.price;
+        ? Number(req.body.price)
+        : existingItem.price;
 
     if (!Number.isFinite(nextPrice) || nextPrice < 0) {
-      return res.status(400).json({ error: 'price must be a non-negative number' });
+      return res
+        .status(400)
+        .json({ error: "price must be a non-negative number" });
     }
-    const nextImage = req.file ? `/uploads/${req.file.filename}` : existingItem.image_url;
+    const nextImage = req.file
+      ? `/uploads/${req.file.filename}`
+      : existingItem.image_url;
 
     db.prepare(
       `
@@ -1105,7 +1241,7 @@ app.put(
 
     const item = db
       .prepare(
-        'SELECT id, name, description, price, image_url AS imageUrl, created_at AS createdAt, updated_at AS updatedAt FROM menu_items WHERE id = ?'
+        "SELECT id, name, description, price, image_url AS imageUrl, created_at AS createdAt, updated_at AS updatedAt FROM menu_items WHERE id = ?"
       )
       .get(itemId);
 
@@ -1114,46 +1250,71 @@ app.put(
 );
 
 app.delete(
-  '/api/owner/restaurants/:id/menu-items/:itemId',
+  "/api/owner/restaurants/:id/menu-items/:itemId",
   requireAuth,
-  requireRole('owner'),
+  requireRole("owner"),
   (req, res) => {
     const restaurantId = Number(req.params.id);
     const itemId = Number(req.params.itemId);
 
     if (!Number.isFinite(restaurantId) || !Number.isFinite(itemId)) {
-      return res.status(400).json({ error: 'invalid ids' });
+      return res.status(400).json({ error: "invalid ids" });
     }
 
     const owned = db
-      .prepare('SELECT id FROM restaurants WHERE id = ? AND owner_id = ?')
+      .prepare("SELECT id FROM restaurants WHERE id = ? AND owner_id = ?")
       .get(restaurantId, req.user.id);
 
     if (!owned) {
-      return res.status(404).json({ error: 'owned restaurant not found' });
+      return res.status(404).json({ error: "owned restaurant not found" });
     }
 
     const existingItem = db
-      .prepare('SELECT id FROM menu_items WHERE id = ? AND restaurant_id = ?')
+      .prepare("SELECT id FROM menu_items WHERE id = ? AND restaurant_id = ?")
       .get(itemId, restaurantId);
 
     if (!existingItem) {
-      return res.status(404).json({ error: 'menu item not found' });
+      return res.status(404).json({ error: "menu item not found" });
     }
 
-    db.prepare('DELETE FROM menu_items WHERE id = ?').run(itemId);
+    db.prepare("DELETE FROM menu_items WHERE id = ?").run(itemId);
     return res.json({ ok: true });
   }
 );
+// --- PASTE THIS BLOCK HERE ---
+app.get("/api/dishes/search", (req, res) => {
+  const query = req.query.q;
+  if (!query) return res.status(400).json({ error: "q is required" });
 
-app.get('*', (_req, res) => {
-  return res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
+  const items = db
+    .prepare(
+      `
+    SELECT m.*, r.name as restaurantName 
+    FROM menu_items m
+    JOIN restaurants r ON m.restaurant_id = r.id
+    WHERE m.name LIKE ?
+  `
+    )
+    .all(`%${query}%`);
+
+  res.json({ items });
+});
+// -----------------------------
+
+app.get("*", (_req, res) => {
+  return res.sendFile(path.join(process.cwd(), "public", "index.html"));
+});
+
+app.get("*", (_req, res) => {
+  return res.sendFile(path.join(process.cwd(), "public", "index.html"));
 });
 
 app.use((err, _req, res, _next) => {
   // eslint-disable-next-line no-console
   console.error(err);
-  return res.status(500).json({ error: err.message || 'internal server error' });
+  return res
+    .status(500)
+    .json({ error: err.message || "internal server error" });
 });
 
 module.exports = app;
