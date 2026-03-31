@@ -37,8 +37,9 @@ async function syncGoogleNearby(db, lat, lng) {
       cuisine_tags,
       google_place_id,
       google_rating,
-      google_rating_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      google_rating_count,
+      google_photo_ref
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(google_place_id)
     DO UPDATE SET
       name = excluded.name,
@@ -47,6 +48,7 @@ async function syncGoogleNearby(db, lat, lng) {
       lng = excluded.lng,
       google_rating = excluded.google_rating,
       google_rating_count = excluded.google_rating_count,
+      google_photo_ref = COALESCE(excluded.google_photo_ref, google_photo_ref),
       updated_at = CURRENT_TIMESTAMP
   `);
 
@@ -70,7 +72,8 @@ async function syncGoogleNearby(db, lat, lng) {
         null,
         placeId,
         place.rating ?? null,
-        place.user_ratings_total ?? 0
+        place.user_ratings_total ?? 0,
+        place.photos?.[0]?.photo_reference ?? null
       );
       syncedCount += 1;
     }

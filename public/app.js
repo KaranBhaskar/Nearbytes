@@ -305,6 +305,71 @@ function activeDietaryFilterText() {
   return state.dietaryFilters.length ? ` | Filters: ${state.dietaryFilters.join(', ')}` : '';
 }
 
+function renderStars(rating) {
+  const fullStars = "★".repeat(rating);
+  const emptyStars = "☆".repeat(5 - rating);
+  return fullStars + emptyStars;
+}
+
+
+const CUISINE_PHOTOS = {
+  burger:     'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&q=80',
+  burgers:    'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&q=80',
+  'fast food':'https://images.unsplash.com/photo-1561758033-d89a9ad46330?w=400&q=80',
+  fastfood:   'https://images.unsplash.com/photo-1561758033-d89a9ad46330?w=400&q=80',
+  pizza:      'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=400&q=80',
+  sushi:      'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=400&q=80',
+  japanese:   'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=400&q=80',
+  ramen:      'https://images.unsplash.com/photo-1569050467447-ce54b3bbc37d?w=400&q=80',
+  chinese:    'https://images.unsplash.com/photo-1563245372-f21724e3856d?w=400&q=80',
+  indian:     'https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=400&q=80',
+  curry:      'https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=400&q=80',
+  mexican:    'https://images.unsplash.com/photo-1565299585323-38d6b0865b47?w=400&q=80',
+  tacos:      'https://images.unsplash.com/photo-1565299585323-38d6b0865b47?w=400&q=80',
+  italian:    'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=400&q=80',
+  pasta:      'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=400&q=80',
+  sandwich:   'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=400&q=80',
+  sandwiches: 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=400&q=80',
+  sub:        'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=400&q=80',
+  cafe:       'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=400&q=80',
+  coffee:     'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=400&q=80',
+  breakfast:  'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&q=80',
+  brunch:     'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&q=80',
+  chicken:    'https://images.unsplash.com/photo-1598103442097-8b74394b95c2?w=400&q=80',
+  seafood:    'https://images.unsplash.com/photo-1565680018434-b513d5e5fd47?w=400&q=80',
+  fish:       'https://images.unsplash.com/photo-1565680018434-b513d5e5fd47?w=400&q=80',
+  thai:       'https://images.unsplash.com/photo-1559314809-0d155014e29e?w=400&q=80',
+  greek:      'https://images.unsplash.com/photo-1544025162-d76538485491?w=400&q=80',
+  mediterranean: 'https://images.unsplash.com/photo-1544025162-d76538485491?w=400&q=80',
+  steak:      'https://images.unsplash.com/photo-1546833998-877b37c2e5c6?w=400&q=80',
+  bbq:        'https://images.unsplash.com/photo-1546833998-877b37c2e5c6?w=400&q=80',
+  grill:      'https://images.unsplash.com/photo-1546833998-877b37c2e5c6?w=400&q=80',
+  vegan:      'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=400&q=80',
+  vegetarian: 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=400&q=80',
+  korean:     'https://images.unsplash.com/photo-1590301157890-4810ed352733?w=400&q=80',
+  halal:      'https://images.unsplash.com/photo-1544025162-d76538485491?w=400&q=80',
+};
+
+const DEFAULT_FOOD_PHOTO = 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&q=80';
+
+function getCuisineStockPhoto(cuisineTags, restaurantName) {
+  const tags = (cuisineTags || []).map(t => t.toLowerCase());
+  const nameLower = (restaurantName || '').toLowerCase();
+
+  for (const tag of tags) {
+    if (CUISINE_PHOTOS[tag]) return CUISINE_PHOTOS[tag];
+    for (const key of Object.keys(CUISINE_PHOTOS)) {
+      if (tag.includes(key) || key.includes(tag)) return CUISINE_PHOTOS[key];
+    }
+  }
+
+  for (const key of Object.keys(CUISINE_PHOTOS)) {
+    if (nameLower.includes(key)) return CUISINE_PHOTOS[key];
+  }
+
+  return DEFAULT_FOOD_PHOTO;
+}
+
 function renderRestaurantCard(restaurant) {
   const card = document.createElement('article');
   card.className = 'restaurant-card';
@@ -319,12 +384,14 @@ function renderRestaurantCard(restaurant) {
     card.classList.add('selected');
   }
 
+  const cardImageSrc = restaurant.coverImage
+    || (restaurant.googlePhotoRef ? `/api/place-photo?ref=${encodeURIComponent(restaurant.googlePhotoRef)}` : null)
+    || getCuisineStockPhoto(restaurant.cuisineTags, restaurant.name);
+
+  const fallbackSrc = getCuisineStockPhoto([], '');
+
   card.innerHTML = `
-    ${
-      restaurant.coverImage
-        ? `<img src="${restaurant.coverImage}" alt="${restaurant.name}" loading="lazy" />`
-        : ''
-    }
+    <img src="${cardImageSrc}" alt="${restaurant.name}" loading="lazy" onerror="this.onerror=null;this.src='${fallbackSrc}'" />
     <div class="restaurant-card-body">
       <h3>${restaurant.name}</h3>
       <p class="muted">${restaurant.address}</p>
@@ -679,9 +746,15 @@ function renderReviewForm(detail, reviews) {
   return `
     <form id="review-form" class="review-form">
       <h3>${myReview ? 'Update Your Review' : 'Write a Review'}</h3>
-      <input name="rating" type="number" min="1" max="5" step="1" required value="${
-        myReview ? myReview.rating : ''
-      }" placeholder="Rating (1-5)" />
+      <div class="star-rating">
+        <button type="button" class="star-btn" data-value="1">★</button>
+        <button type="button" class="star-btn" data-value="2">★</button>
+        <button type="button" class="star-btn" data-value="3">★</button>
+        <button type="button" class="star-btn" data-value="4">★</button>
+        <button type="button" class="star-btn" data-value="5">★</button>
+      </div>
+
+      <input type="hidden" name="rating" id="review-rating" value="${myReview ? myReview.rating : 0}" />
       <textarea name="comment" placeholder="Share your experience">${
         myReview && myReview.comment ? myReview.comment : ''
       }</textarea>
@@ -775,7 +848,8 @@ async function loadRestaurantDetails(restaurantId) {
               .map(
                 (review) => `
               <article class="review-item">
-                <strong>${review.userName}</strong> - ${review.rating}/5
+                <strong>${review.userName}</strong>
+                <p class="review-stars">${renderStars(review.rating)}</p>
                 <p>${review.comment || ''}</p>
                 <p class="muted">${formatDate(review.createdAt)}</p>
               </article>
@@ -787,22 +861,41 @@ async function loadRestaurantDetails(restaurantId) {
     </div>
   `;
 
+  setupStarRating();
+
   const reviewForm = document.getElementById('review-form');
   if (reviewForm) {
     reviewForm.addEventListener('submit', async (event) => {
       event.preventDefault();
+
       const formData = new FormData(reviewForm);
+
+      const rating = Number(formData.get('rating'));
+      const starRating = reviewForm.querySelector('.star-rating');
+
+      // remove previous error state
+      starRating?.classList.remove('error');
+
+      // ❗ validation
+      if (!rating || rating < 1 || rating > 5) {
+        starRating?.classList.add('error');
+        return;
+      }
+
       try {
         await api(`/api/restaurants/${restaurantId}/reviews`, {
           method: 'POST',
           body: {
-            rating: Number(formData.get('rating')),
+            rating: rating,
             comment: String(formData.get('comment') || '').trim(),
           },
         });
 
         showToast('Review saved');
-        await Promise.all([loadRestaurantDetails(restaurantId), refreshRestaurantInFeed(restaurantId)]);
+        await Promise.all([
+          loadRestaurantDetails(restaurantId),
+          refreshRestaurantInFeed(restaurantId),
+        ]);
       } catch (err) {
         showToast(err.message, true);
       }
@@ -1215,6 +1308,43 @@ async function resetAndReloadRestaurants() {
     '<h2>Restaurant Details</h2><p class="muted">Select a restaurant to view menu, photos, and reviews.</p>';
   renderRestaurantList();
   await loadMoreRestaurants();
+}
+
+function setupStarRating() {
+  const ratingInput = document.getElementById('review-rating');
+  const starButtons = document.querySelectorAll('.star-btn');
+  const starContainer = document.querySelector('.star-rating');
+
+  if (!ratingInput || !starButtons.length || !starContainer) return;
+
+  function paintStars(value) {
+    starButtons.forEach((btn) => {
+      const starValue = Number(btn.dataset.value);
+      btn.classList.toggle('active', starValue <= value);
+    });
+  }
+
+  const savedRating = Number(ratingInput.value || 0);
+  paintStars(savedRating);
+
+  starButtons.forEach((btn) => {
+    btn.addEventListener('mouseenter', () => {
+      const hoverValue = Number(btn.dataset.value);
+      paintStars(hoverValue);
+    });
+
+    btn.addEventListener('click', () => {
+      const selectedValue = Number(btn.dataset.value);
+      ratingInput.value = selectedValue;
+      paintStars(selectedValue);
+      starContainer.classList.remove('error');
+    });
+  });
+
+  starContainer.addEventListener('mouseleave', () => {
+    const savedValue = Number(ratingInput.value || 0);
+    paintStars(savedValue);
+  });
 }
 
 async function init() {

@@ -108,40 +108,77 @@ function hasTruthyDietaryValue(value) {
 
 function inferExternalDietaryTags(tags = {}) {
   const dietaryTags = new Set();
+
   const searchableText = Object.values(tags)
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
+
   const cuisineText = String(tags.cuisine || "").toLowerCase();
+  const nameText = String(tags.name || "").toLowerCase();
+  const combinedText = `${nameText} ${cuisineText} ${searchableText}`;
+
+  // Direct OSM/OpenStreetMap diet tags
+  if (hasTruthyDietaryValue(tags["diet:vegan"]) || combinedText.includes("vegan")) {
+    dietaryTags.add("vegan");
+  }
 
   if (
-    hasTruthyDietaryValue(tags["diet:vegan"]) ||
-    searchableText.includes("vegan")
-  )
-    dietaryTags.add("vegan");
-  if (
     hasTruthyDietaryValue(tags["diet:vegetarian"]) ||
-    cuisineText.includes("vegetarian") ||
-    searchableText.includes("vegetarian")
-  )
+    combinedText.includes("vegetarian")
+  ) {
     dietaryTags.add("vegetarian");
-  if (
-    hasTruthyDietaryValue(tags["diet:halal"]) ||
-    searchableText.includes("halal")
-  )
+  }
+
+  if (hasTruthyDietaryValue(tags["diet:halal"]) || combinedText.includes("halal")) {
     dietaryTags.add("halal");
-  if (
-    hasTruthyDietaryValue(tags["diet:kosher"]) ||
-    searchableText.includes("kosher")
-  )
+  }
+
+  if (hasTruthyDietaryValue(tags["diet:kosher"]) || combinedText.includes("kosher")) {
     dietaryTags.add("kosher");
+  }
+
   if (
     hasTruthyDietaryValue(tags["diet:gluten_free"]) ||
     hasTruthyDietaryValue(tags["diet:gluten-free"]) ||
-    searchableText.includes("gluten free") ||
-    searchableText.includes("gluten-free")
-  )
+    combinedText.includes("gluten free") ||
+    combinedText.includes("gluten-free")
+  ) {
     dietaryTags.add("gluten-free");
+  }
+
+  // Helpful fallback rules based on cuisine / restaurant type
+  if (
+    combinedText.includes("salad") ||
+    combinedText.includes("veggie") ||
+    combinedText.includes("plant-based")
+  ) {
+    dietaryTags.add("vegetarian");
+  }
+
+  if (
+    combinedText.includes("indian") ||
+    combinedText.includes("mediterranean") ||
+    combinedText.includes("middle eastern") ||
+    combinedText.includes("falafel")
+  ) {
+    dietaryTags.add("vegetarian");
+  }
+
+  // Common halal clues
+  if (
+    combinedText.includes("shawarma") ||
+    combinedText.includes("kebab") ||
+    combinedText.includes("gyro") ||
+    combinedText.includes("halal")
+  ) {
+    dietaryTags.add("halal");
+  }
+
+  // Vegan implies vegetarian
+  if (dietaryTags.has("vegan")) {
+    dietaryTags.add("vegetarian");
+  }
 
   return Array.from(dietaryTags);
 }
@@ -168,9 +205,21 @@ function normalizeExternalRestaurantElement(element, originLat, originLng) {
   const lng = Number(element.lon ?? element.center?.lon);
   const name = String(tags.name || "").trim();
 
-  if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-    return null;
+  let inferredDietaryTags = inferExternalDietaryTags(tags);
+
+  const lowerName = name.toLowerCase();
+
+  if (lowerName.includes("subway")) {
+    inferredDietaryTags = [...new Set([...inferredDietaryTags, "vegetarian"])];
   }
+
+  if (lowerName.includes("osmow") || lowerName.includes("shawarma")) {
+    inferredDietaryTags = [...new Set([...inferredDietaryTags, "halal"])];
+  }
+
+    if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return null;
+    }
 
   return {
     externalPlaceId: `osm:${element.type}:${element.id}`,
@@ -183,7 +232,7 @@ function normalizeExternalRestaurantElement(element, originLat, originLng) {
     website: tags.website || tags["contact:website"] || null,
     openingHours: tags.opening_hours || null,
     cuisineTags: normalizeTagList(tags.cuisine),
-    dietaryTags: inferExternalDietaryTags(tags),
+    dietaryTags: inferredDietaryTags,
     distanceKm: haversineKm(originLat, originLng, lat, lng),
   };
 }
@@ -308,6 +357,7 @@ function normalizeRestaurantRow(row) {
     cuisineTags: parseCuisineTags(row.cuisine_tags),
     dietaryTags: parseCuisineTags(row.dietary_tags),
     googlePlaceId: row.google_place_id,
+    googlePhotoRef: row.google_photo_ref || null,
     coverImage: row.cover_image || null,
     googleRating: googleAvg,
     googleRatingCount: googleCount,
@@ -530,6 +580,27 @@ app.get("/api/location/reverse", async (req, res) => {
   }
 });
 
+app.get("/api/place-photo", async (req, res) => {
+  const ref = String(req.query.ref || "").trim();
+  if (!ref) return res.status(400).json({ error: "ref is required" });
+
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: "Google API key not configured" });
+
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=600&photo_reference=${encodeURIComponent(ref)}&key=${apiKey}`;
+    const upstream = await fetch(url);
+    if (!upstream.ok) return res.status(upstream.status).end();
+
+    res.set("Content-Type", upstream.headers.get("content-type") || "image/jpeg");
+    res.set("Cache-Control", "public, max-age=86400");
+    const buffer = await upstream.arrayBuffer();
+    return res.send(Buffer.from(buffer));
+  } catch (err) {
+    return res.status(502).json({ error: "Failed to fetch photo" });
+  }
+});
+
 app.get("/api/location/restaurants", async (req, res) => {
   const lat = Number(req.query.lat);
   const lng = Number(req.query.lng);
@@ -583,7 +654,7 @@ out center tags;
       .map((restaurant) => {
         const restaurantId = upsertExternalRestaurant(restaurant);
         return {
-          id: `osm-${restaurant.externalPlaceId}`,
+          id: restaurantId,
           ownerId: null,
           name: restaurant.name,
           address: restaurant.address,

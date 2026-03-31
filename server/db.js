@@ -89,6 +89,9 @@ function migrate(database) {
   if (!restaurantColumns.some((column) => column.name === 'opening_hours')) {
     database.exec('ALTER TABLE restaurants ADD COLUMN opening_hours TEXT');
   }
+  if (!restaurantColumns.some((column) => column.name === 'google_photo_ref')) {
+    database.exec('ALTER TABLE restaurants ADD COLUMN google_photo_ref TEXT');
+  }
 }
 
 function getDb() {
