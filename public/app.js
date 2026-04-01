@@ -998,8 +998,6 @@ function populateOwnerRestaurantForm(restaurantId) {
   els.editRestaurantForm.elements.restaurantId.value = String(restaurant.id);
   els.editRestaurantForm.elements.name.value = restaurant.name || '';
   els.editRestaurantForm.elements.address.value = restaurant.address || '';
-  els.editRestaurantForm.elements.lat.value = restaurant.lat ?? '';
-  els.editRestaurantForm.elements.lng.value = restaurant.lng ?? '';
   els.editRestaurantForm.elements.phone.value = restaurant.phone || '';
   els.editRestaurantForm.elements.website.value = restaurant.website || '';
   els.editRestaurantForm.elements.cuisineTags.value = toCuisineTagString(restaurant.cuisineTags);
@@ -1119,24 +1117,18 @@ function bindEvents() {
     }
 
     const formData = new FormData(els.createRestaurantForm);
-    let lat = formData.get('lat');
-    let lng = formData.get('lng');
     const address = String(formData.get('address') || '').trim();
 
     try {
-      if ((!lat || !lng) && address) {
-        const geo = await geocodeQuery(address);
-        lat = geo.lat;
-        lng = geo.lng;
-      }
+      const geo = await geocodeQuery(address);
 
       await api('/api/owner/restaurants', {
         method: 'POST',
         body: {
           name: String(formData.get('name') || '').trim(),
-          address,
-          lat: Number(lat),
-          lng: Number(lng),
+          address: geo.label || address,
+          lat: Number(geo.lat),
+          lng: Number(geo.lng),
           phone: String(formData.get('phone') || '').trim(),
           website: String(formData.get('website') || '').trim(),
           description: String(formData.get('description') || '').trim(),
@@ -1266,13 +1258,16 @@ function bindEvents() {
       }
 
       try {
+        const address = String(formData.get('address') || '').trim();
+        const geo = await geocodeQuery(address);
+
         await api(`/api/owner/restaurants/${restaurantId}`, {
           method: 'PUT',
           body: {
             name: String(formData.get('name') || '').trim(),
-            address: String(formData.get('address') || '').trim(),
-            lat: Number(formData.get('lat')),
-            lng: Number(formData.get('lng')),
+            address: geo.label || address,
+            lat: Number(geo.lat),
+            lng: Number(geo.lng),
             phone: String(formData.get('phone') || '').trim(),
             website: String(formData.get('website') || '').trim(),
             description: String(formData.get('description') || '').trim(),
