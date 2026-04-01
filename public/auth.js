@@ -128,6 +128,7 @@ function bindEvents(returnTo) {
   els.loginForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const formData = new FormData(els.loginForm);
+    const loginMode = String(formData.get('loginMode') || 'standard');
     const email = String(formData.get('email') || '').trim();
     const password = String(formData.get('password') || '');
 
@@ -137,6 +138,7 @@ function bindEvents(returnTo) {
         body: {
           email,
           password,
+          loginMode,
         },
       });
 

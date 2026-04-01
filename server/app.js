@@ -24,6 +24,33 @@ const {
 const app = express();
 const db = getDb();
 const APP_USER_AGENT = "NearbyBites/1.0 (city lookup prototype)";
+const MODERATOR_EMAIL = "nearbytesadmin@email.com";
+const MODERATOR_PASSWORD = "nearbytesadmin";
+
+function ensureModeratorAccount() {
+  const normalizedEmail = MODERATOR_EMAIL.toLowerCase();
+  const existing = db
+    .prepare("SELECT id FROM users WHERE email = ?")
+    .get(normalizedEmail);
+  const passwordHash = bcrypt.hashSync(MODERATOR_PASSWORD, 10);
+
+  if (existing) {
+    db.prepare(
+      `
+      UPDATE users
+      SET name = ?, password_hash = ?, role = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `
+    ).run("Nearbytes Moderator", passwordHash, "moderator", existing.id);
+    return;
+  }
+
+  db.prepare(
+    "INSERT INTO users(name, email, password_hash, role) VALUES (?, ?, ?, ?)"
+  ).run("Nearbytes Moderator", normalizedEmail, passwordHash, "moderator");
+}
+
+ensureModeratorAccount();
 
 const uploadsDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadsDir)) {
@@ -732,17 +759,39 @@ app.post("/api/auth/signup", (req, res) => {
 });
 
 app.post("/api/auth/login", (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, loginMode } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: "email and password are required" });
   }
 
   const normalizedEmail = String(email).trim().toLowerCase();
+  const normalizedLoginMode =
+    String(loginMode || "standard")
+      .trim()
+      .toLowerCase() === "moderator"
+      ? "moderator"
+      : "standard";
   const user = db
     .prepare("SELECT * FROM users WHERE email = ?")
     .get(normalizedEmail);
   if (!user) {
     return res.status(401).json({ error: "invalid credentials" });
+  }
+
+  if (user.role === "moderator" && normalizedLoginMode !== "moderator") {
+    return res
+      .status(403)
+      .json({ error: "moderator account requires moderator login" });
+  }
+
+  if (normalizedLoginMode === "moderator") {
+    if (normalizedEmail !== MODERATOR_EMAIL || password !== MODERATOR_PASSWORD) {
+      return res.status(401).json({ error: "invalid moderator credentials" });
+    }
+
+    if (user.role !== "moderator") {
+      return res.status(403).json({ error: "moderator account not configured" });
+    }
   }
 
   const isValid = bcrypt.compareSync(password, user.password_hash);
@@ -1015,7 +1064,7 @@ app.put(
 app.delete(
   "/api/restaurants/:id/reviews/:reviewId",
   requireAuth,
-  requireRole("customer"),
+  requireRole("customer", "moderator"),
   (req, res) => {
     const restaurantId = Number(req.params.id);
     const reviewId = Number(req.params.reviewId);
@@ -1032,7 +1081,7 @@ app.delete(
       return res.status(404).json({ error: "review not found" });
     }
 
-    if (review.user_id !== req.user.id) {
+    if (req.user.role !== "moderator" && review.user_id !== req.user.id) {
       return res
         .status(403)
         .json({ error: "you can only delete your own review" });

@@ -610,6 +610,10 @@ textarea {
 }
 
 .auth-topbar { border-left: 4px solid var(--primary); }
+.auth-helper {
+  margin: 0;
+  font-size: 12px;
+}
 
 /* ── LIST LOADER ─────────────────────────────────────────── */
 .list-loader {
@@ -636,6 +640,10 @@ textarea {
 
 /* ── MUTED ───────────────────────────────────────────────── */
 .muted { color: var(--muted); }
+
+.review-actions {
+  margin-top: 10px;
+}
 
 /* ── HIDDEN ──────────────────────────────────────────────── */
 .hidden { display: none !important; }

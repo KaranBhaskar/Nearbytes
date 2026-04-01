@@ -45,6 +45,18 @@ async function loginOwner() {
   return response.body;
 }
 
+async function loginModerator(overrides = {}) {
+  const response = await request(app).post('/api/auth/login').send({
+    email: 'nearbytesadmin@email.com',
+    password: 'nearbytesadmin',
+    loginMode: 'moderator',
+    ...overrides,
+  });
+
+  expect(response.status).toBe(200);
+  return response.body;
+}
+
 function getNearby(query = {}) {
   return request(app)
     .get('/api/restaurants/nearby')
@@ -178,6 +190,49 @@ describe('Nearby Bites API flows', () => {
     expect(details.body.myReview).toBeNull();
     expect(details.body.restaurant.appRating).toBeNull();
     expect(details.body.restaurant.appRatingCount).toBe(0);
+  });
+
+  test('stale auth token is rejected before review insert hits foreign key constraints', async () => {
+    const nearby = await getNearby().expect(200);
+    const unratedRestaurant = nearby.body.items.find((item) => item.appRatingCount === 0);
+
+    expect(unratedRestaurant).toBeDefined();
+
+    const auth = await signupCustomer();
+    const { getDb } = require('./db');
+    getDb().prepare('DELETE FROM users WHERE id = ?').run(auth.user.id);
+
+    const response = await request(app)
+      .post(`/api/restaurants/${unratedRestaurant.id}/reviews`)
+      .set('Authorization', `Bearer ${auth.token}`)
+      .send({ rating: 5, comment: 'Should fail cleanly' })
+      .expect(401);
+
+    expect(response.body.error).toBe('Invalid or expired token');
+  });
+
+  test('moderator account requires moderator login mode and can remove any review', async () => {
+    await request(app)
+      .post('/api/auth/login')
+      .send({
+        email: 'nearbytesadmin@email.com',
+        password: 'nearbytesadmin',
+      })
+      .expect(403);
+
+    const moderator = await loginModerator();
+    expect(moderator.user.role).toBe('moderator');
+
+    const seededReview = await request(app).get('/api/restaurants/1/reviews').expect(200);
+    const existingReviewId = seededReview.body.reviews[0].id;
+
+    await request(app)
+      .delete(`/api/restaurants/1/reviews/${existingReviewId}`)
+      .set('Authorization', `Bearer ${moderator.token}`)
+      .expect(200);
+
+    const afterDelete = await request(app).get('/api/restaurants/1/reviews').expect(200);
+    expect(afterDelete.body.reviews.some((review) => review.id === existingReviewId)).toBe(false);
   });
 
   test('owner can create a restaurant, upload images, add a menu item, and see it in discovery', async () => {

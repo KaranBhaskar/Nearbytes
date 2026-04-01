@@ -6,6 +6,7 @@ function seed() {
   const db = getDb();
   const ownerPassword = bcrypt.hashSync('Owner@123', 10);
   const customerPassword = bcrypt.hashSync('Customer@123', 10);
+  const moderatorPassword = bcrypt.hashSync('nearbytesadmin', 10);
 
   const transaction = db.transaction(() => {
     db.exec(`
@@ -27,6 +28,12 @@ function seed() {
       'customer@example.com',
       customerPassword,
       'customer'
+    );
+    insertUser.run(
+      'Nearbytes Moderator',
+      'nearbytesadmin@email.com',
+      moderatorPassword,
+      'moderator'
     );
     const ownerId = ownerInfo.lastInsertRowid;
     const customerId = customerInfo.lastInsertRowid;
@@ -117,7 +124,9 @@ function seed() {
   transaction();
 
   // eslint-disable-next-line no-console
-  console.log('Seed complete. Demo users: owner@example.com / Owner@123, customer@example.com / Customer@123');
+  console.log(
+    'Seed complete. Demo users: owner@example.com / Owner@123, customer@example.com / Customer@123, nearbytesadmin@email.com / nearbytesadmin'
+  );
 }
 
 if (require.main === module) {

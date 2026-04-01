@@ -16,7 +16,7 @@ function migrate(database) {
       name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('customer', 'owner')),
+      role TEXT NOT NULL CHECK(role IN ('customer', 'owner', 'moderator')),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -81,6 +81,35 @@ function migrate(database) {
     CREATE INDEX IF NOT EXISTS idx_images_restaurant_id ON restaurant_images(restaurant_id);
     CREATE INDEX IF NOT EXISTS idx_menu_restaurant_id ON menu_items(restaurant_id);
   `);
+
+  const usersTableSql = database
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")
+    .get();
+  if (
+    usersTableSql &&
+    usersTableSql.sql &&
+    !String(usersTableSql.sql).includes("'moderator'")
+  ) {
+    database.exec(`
+      ALTER TABLE users RENAME TO users_old;
+
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('customer', 'owner', 'moderator')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      INSERT INTO users(id, name, email, password_hash, role, created_at, updated_at)
+      SELECT id, name, email, password_hash, role, created_at, updated_at
+      FROM users_old;
+
+      DROP TABLE users_old;
+    `);
+  }
 
   const restaurantColumns = database.prepare("PRAGMA table_info(restaurants)").all();
   if (!restaurantColumns.some((column) => column.name === 'dietary_tags')) {

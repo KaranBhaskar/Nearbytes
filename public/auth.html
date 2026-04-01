@@ -29,8 +29,15 @@
         <div class="auth-panels">
           <form id="login-form" class="auth-form subcard">
             <h3>Log In</h3>
+            <select name="loginMode" required>
+              <option value="standard">Customer / Owner</option>
+              <option value="moderator">Moderator</option>
+            </select>
             <input name="email" type="email" placeholder="Email" required />
             <input name="password" type="password" placeholder="Password" required />
+            <p class="muted auth-helper">
+              Moderator access is restricted to the developer account only.
+            </p>
             <button type="submit" class="btn btn-primary">Log In</button>
           </form>
 

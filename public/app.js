@@ -760,17 +760,12 @@ async function loadMoreRestaurants() {
   }
 
   try {
-    let externalItems = [];
+    const data = await api(`/api/restaurants/nearby?${params.toString()}`);
+    const nextItems = Array.isArray(data.items) ? data.items : [];
 
-    try {
-      externalItems = await fetchExternalRestaurants(state.location.lat, state.location.lng);
-    } catch (_err) {
-      externalItems = [];
-    }
-
-    state.restaurants = externalItems;
-    state.cursor = null;
-    state.hasMore = false;
+    state.restaurants = state.cursor ? [...state.restaurants, ...nextItems] : nextItems;
+    state.cursor = data.nextCursor || null;
+    state.hasMore = Boolean(data.hasMore);
     renderRestaurantList();
   } catch (err) {
     showToast(err.message, true);
@@ -792,7 +787,7 @@ function renderReviewForm(detail, reviews) {
   }
 
   if (state.user.role !== 'customer') {
-    return '<p class="muted">Owner accounts cannot post customer reviews in this prototype.</p>';
+    return '<p class="muted">Only customer accounts can post reviews. Moderator accounts can remove reviews.</p>';
   }
 
   const myReview = detail.myReview;
@@ -819,6 +814,25 @@ function renderReviewForm(detail, reviews) {
       ${myReview ? '<button class="btn btn-outline" type="button" id="delete-review">Delete Review</button>' : ''}
       <input type="hidden" name="reviewId" value="${myReviewId || ''}" />
     </form>
+  `;
+}
+
+function renderModeratorReviewActions(restaurantId, review) {
+  if (!state.user || state.user.role !== 'moderator') {
+    return '';
+  }
+
+  return `
+    <div class="review-actions">
+      <button
+        type="button"
+        class="btn btn-outline moderator-delete-review"
+        data-restaurant-id="${restaurantId}"
+        data-review-id="${review.id}"
+      >
+        Remove Review
+      </button>
+    </div>
   `;
 }
 
@@ -912,6 +926,7 @@ async function loadRestaurantDetails(restaurantId) {
                 <p class="review-stars">${renderStars(review.rating)}</p>
                 <p>${review.comment || ''}</p>
                 <p class="muted">${formatDate(review.createdAt)}</p>
+                ${renderModeratorReviewActions(restaurantId, review)}
               </article>
             `
               )
@@ -995,6 +1010,30 @@ async function loadRestaurantDetails(restaurantId) {
       }
     });
   }
+
+  els.detailsPanel.querySelectorAll('.moderator-delete-review').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const reviewId = Number(button.dataset.reviewId);
+      const reviewRestaurantId = Number(button.dataset.restaurantId);
+
+      if (!Number.isFinite(reviewId) || !Number.isFinite(reviewRestaurantId)) {
+        return;
+      }
+
+      try {
+        await api(`/api/restaurants/${reviewRestaurantId}/reviews/${reviewId}`, {
+          method: 'DELETE',
+        });
+        showToast('Review removed');
+        await Promise.all([
+          loadRestaurantDetails(reviewRestaurantId),
+          refreshRestaurantInFeed(reviewRestaurantId),
+        ]);
+      } catch (err) {
+        showToast(err.message, true);
+      }
+    });
+  });
 }
 
 async function refreshRestaurantInFeed(restaurantId) {
