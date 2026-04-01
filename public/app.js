@@ -13,6 +13,7 @@ const state = {
   selectedOwnerRestaurantId: null,
   dietaryFilters: [],
   pendingMapLocation: null,
+  favoritesOnly: false,
 };
 
 const CITY_SEARCH_RADIUS_METERS = 30000;
@@ -50,11 +51,27 @@ const els = {
   menuRestaurantSelect: document.getElementById('menu-restaurant-select'),
   dietaryFilterInputs: Array.from(document.querySelectorAll('input[name="dietary-filter"]')),
   clearFiltersBtn: document.getElementById('clear-filters'),
+  favoritesFilterInput: document.getElementById('favorites-filter'),
 };
 
 let observer;
 let locationMap = null;
 let locationMarker = null;
+let favorites = JSON.parse(localStorage.getItem("favorites") || "[]");
+
+function isFavorite(id) {
+  return favorites.includes(id);
+}
+
+function toggleFavorite(id) {
+  if (favorites.includes(id)) {
+    favorites = favorites.filter(f => f !== id);
+  } else {
+    favorites.push(id);
+  }
+
+  localStorage.setItem("favorites", JSON.stringify(favorites));
+}
 
 function showToast(message, isError = false) {
   els.toast.textContent = message;
@@ -302,7 +319,13 @@ function ratingText(value, count) {
 }
 
 function activeDietaryFilterText() {
-  return state.dietaryFilters.length ? ` | Filters: ${state.dietaryFilters.join(', ')}` : '';
+  const activeFilters = [...state.dietaryFilters];
+
+  if (state.favoritesOnly) {
+    activeFilters.push('Favorites');
+  }
+
+  return activeFilters.length ? ` | Filters: ${activeFilters.join(', ')}` : '';
 }
 
 function renderStars(rating) {
@@ -391,6 +414,7 @@ function renderRestaurantCard(restaurant) {
   const fallbackSrc = getCuisineStockPhoto([], '');
 
   card.innerHTML = `
+  <button class="fav-btn ${isFavorite(restaurant.id) ? 'active' : ''}" data-id="${restaurant.id}">🔖</button>
     <img src="${cardImageSrc}" alt="${restaurant.name}" loading="lazy" onerror="this.onerror=null;this.src='${fallbackSrc}'" />
     <div class="restaurant-card-body">
       <h3>${restaurant.name}</h3>
@@ -421,19 +445,52 @@ function renderRestaurantCard(restaurant) {
     loadRestaurantDetails(restaurant.id).catch((err) => showToast(err.message, true));
   });
 
+
+  const favBtn = card.querySelector('.fav-btn');
+    if (favBtn) {
+      favBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+
+        if (!state.user) {
+          showToast('Sign in to save this restaurant as a favorite.', true);
+          return;
+        }
+
+        toggleFavorite(restaurant.id);
+        favBtn.classList.toggle('active', isFavorite(restaurant.id));
+
+        const detailsFavBtn = els.detailsPanel.querySelector('.fav-btn.large');
+        if (detailsFavBtn && state.selectedRestaurantId === restaurant.id) {
+          detailsFavBtn.classList.toggle('active', isFavorite(restaurant.id));
+        }
+      });
+    }
+
   return card;
 }
+
+
 
 function getFilteredRestaurants() {
   const selectedFilters = els.dietaryFilterInputs
     .filter((input) => input.checked)
     .map((input) => normalizeDietaryTag(input.value));
 
-  if (selectedFilters.length === 0) {
-    return state.restaurants;
+  let restaurants = [...state.restaurants];
+
+  if (selectedFilters.length > 0) {
+    restaurants = restaurants.filter((restaurant) =>
+      restaurantMatchesDietaryFilters(restaurant, selectedFilters)
+    );
   }
 
-  return state.restaurants.filter((restaurant) => restaurantMatchesDietaryFilters(restaurant, selectedFilters));
+  if (state.favoritesOnly) {
+    restaurants = restaurants
+      .filter((restaurant) => isFavorite(restaurant.id))
+      .sort((a, b) => Number(isFavorite(b.id)) - Number(isFavorite(a.id)));
+  }
+
+  return restaurants;
 }
 
 function updateFeedMeta() {
@@ -451,7 +508,7 @@ function updateFeedMeta() {
     return;
   }
 
-  if (state.dietaryFilters.length) {
+  if (state.dietaryFilters.length || state.favoritesOnly) {
     els.feedMeta.textContent = `${filteredCount} of ${totalCount} restaurants shown near ${label}${activeDietaryFilterText()}`;
     return;
   }
@@ -782,7 +839,10 @@ async function loadRestaurantDetails(restaurantId) {
   const hoursHtml = restaurant.openingHours ? `<p><strong>Hours:</strong> ${restaurant.openingHours}</p>` : '';
 
   els.detailsPanel.innerHTML = `
-    <h2>${restaurant.name}</h2>
+    <div style="position: relative;">
+      <h2>${restaurant.name}</h2>
+      <button class="fav-btn large ${isFavorite(restaurant.id) ? 'active' : ''}" data-id="${restaurant.id}">🔖</button>
+    </div>
     <p class="muted">${restaurant.address}</p>
     <p>${restaurant.description || 'No description provided yet.'}</p>
 
@@ -860,6 +920,22 @@ async function loadRestaurantDetails(restaurantId) {
       }
     </div>
   `;
+  const detailsFavBtn = els.detailsPanel.querySelector('.fav-btn.large');
+    if (detailsFavBtn) {
+      detailsFavBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+
+        if (!state.user) {
+          showToast('Sign in to save this restaurant as a favorite.', true);
+          return;
+        }
+
+        toggleFavorite(restaurant.id);
+        detailsFavBtn.classList.toggle('active', isFavorite(restaurant.id));
+        renderRestaurantList();
+      });
+    }
+
 
   setupStarRating();
 
@@ -1077,13 +1153,31 @@ function bindEvents() {
     });
   }
 
+  if (els.favoritesFilterInput) {
+    els.favoritesFilterInput.addEventListener('change', () => {
+      if (els.favoritesFilterInput.checked && !state.user) {
+        els.favoritesFilterInput.checked = false;
+        showToast('Sign in to view your favorite restaurants.', true);
+        return;
+      }
+
+      state.favoritesOnly = els.favoritesFilterInput.checked;
+      renderRestaurantList();
+    });
+  }
+
   if (els.clearFiltersBtn) {
     els.clearFiltersBtn.addEventListener('click', () => {
       els.dietaryFilterInputs.forEach((input) => {
         input.checked = false;
       });
 
+      if (els.favoritesFilterInput) {
+        els.favoritesFilterInput.checked = false;
+      }
+
       state.dietaryFilters = [];
+      state.favoritesOnly = false;
       renderRestaurantList();
     });
   }
