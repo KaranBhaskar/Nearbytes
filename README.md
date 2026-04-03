@@ -68,6 +68,10 @@ npm run smoke
 
 This project follows a comprehensive testing plan covering 33 total test cases. Run the full automated suite (25 tests) with:
 
+```bash
+npm test
+```
+
 - Unit Tests (Clear Box): to verify core logic like registration, login, and rating calculations. Run
 
 ```bash
