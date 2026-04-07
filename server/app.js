@@ -664,11 +664,16 @@ out center tags;
         .map((element) => normalizeExternalRestaurantElement(element, lat, lng))
         .filter(Boolean)
         .filter((restaurant) => {
-          const key = `${restaurant.name.toLowerCase()}|${restaurant.address.toLowerCase()}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+          const tags = (restaurant.dietaryTags || []).map((item) =>
+            String(item).toLowerCase()
+          );
+
+          if (tags.includes("vegan") && !tags.includes("vegetarian")) {
+            tags.push("vegetarian");
+          }
+
+          return dietaryFilters.every((tag) => tags.includes(tag));
+        })
 
       if (normalizedRestaurants.length >= 12) {
         break;
