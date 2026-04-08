@@ -32,6 +32,7 @@ cp .env.example .env
 
 ```bash
 npm install
+npm install cheerio
 ```
 
 3. Seed demo data:
