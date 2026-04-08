@@ -1,6 +1,6 @@
 # Nearbytes
 
-A working prototype web app for discovering nearby restaurants, viewing combined ratings (Google + app reviews), and role-based actions for customers and restaurant owners.
+Our system is a database of restaurants, their menu items, users' reviews for the corresponding restaurants and items, and the dietary restrictions for each item. The main objective is to assist users in locating restaurants and to provide an idea of their quality through parameters such as ratings, reviews, costs, cuisines, vegan, gluten-free, allergy-free, kosher, or halal. It is essential to have both quantitative and qualitative features to help users choose where to dine.
 
 ## Features Implemented
 
