@@ -17,9 +17,44 @@ export function normalizeTag(tag: string) {
   const normalized = String(tag || "")
     .trim()
     .toLowerCase()
-    .replace(/\s+/g, "-");
+    .replace(/[_\s]+/g, "-");
 
   return normalized === "gluten_free" ? "gluten-free" : normalized;
+}
+
+function uniqueTags(tags: string[]) {
+  return Array.from(new Set(tags.map(normalizeTag).filter(Boolean)));
+}
+
+function isDisplayFriendlyTag(tag: string) {
+  if (!tag) {
+    return false;
+  }
+
+  if (tag === "restaurant" || tag === "food" || tag === "point-of-interest" || tag === "establishment") {
+    return false;
+  }
+
+  if (
+    tag.endsWith("-restaurant") ||
+    tag.endsWith("-shop") ||
+    tag.endsWith("-store") ||
+    tag.endsWith("-point-of-interest")
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function buildDisplayTags(restaurant: Record<string, any>) {
+  const tags = uniqueTags([
+    ...(restaurant.cuisineTags || []),
+    ...(restaurant.dietaryTags || []),
+    restaurant.primaryType || "",
+  ]);
+
+  return tags.filter(isDisplayFriendlyTag).slice(0, 8);
 }
 
 export function buildReviewStats(reviews: Array<Record<string, any>>) {
@@ -63,10 +98,13 @@ export function buildRestaurantSummary(
     description: restaurant.description,
     phone: restaurant.phone,
     website: restaurant.website,
+    googleMapsUri: restaurant.googleMapsUri || null,
     openingHours: restaurant.openingHours,
     menuUrl: restaurant.menuUrl,
+    primaryType: restaurant.primaryType || null,
     cuisineTags: restaurant.cuisineTags || [],
     dietaryTags: restaurant.dietaryTags || [],
+    displayTags: buildDisplayTags(restaurant),
     coverImage,
     images: restaurant.images || [],
     menuItems: restaurant.menuItems || [],
@@ -74,6 +112,8 @@ export function buildRestaurantSummary(
     syncStatus: restaurant.syncStatus,
     ownerUserId: restaurant.ownerUserId || null,
     createdByUserId: restaurant.createdByUserId || null,
+    isHidden: Boolean(restaurant.isHidden),
+    hiddenReason: restaurant.hiddenReason || null,
     googleRating,
     googleRatingCount,
     appRating,
@@ -106,4 +146,3 @@ export async function deleteRestaurantTree(ctx: any, restaurantId: any) {
 
   await ctx.db.delete(restaurantId);
 }
-

@@ -61,7 +61,7 @@ export function normalizeTagList(value: unknown) {
             String(entry || "")
               .trim()
               .toLowerCase()
-              .replace(/\s+/g, "-"),
+              .replace(/[_\s]+/g, "-"),
           )
           .filter(Boolean),
       ),
@@ -76,7 +76,7 @@ export function normalizeTagList(value: unknown) {
           entry
             .trim()
             .toLowerCase()
-            .replace(/\s+/g, "-"),
+            .replace(/[_\s]+/g, "-"),
         )
         .filter(Boolean),
     ),
@@ -125,6 +125,9 @@ export function presentUser(user: Record<string, any>) {
     email: user.email,
     displayName: user.displayName,
     role: user.role,
+    isBanned: Boolean(user.isBanned),
+    bannedAt: user.bannedAt || null,
+    bannedReason: user.bannedReason || null,
   };
 }
 
@@ -163,6 +166,31 @@ export function generateRandomHex(byteLength = 32) {
 }
 
 export async function issueSession(ctx: any, userId: any) {
+  const existingSessions = await ctx.db
+    .query("sessions")
+    .withIndex("by_user_id", (query: any) => query.eq("userId", userId))
+    .collect();
+  const now = Date.now();
+  const activeSessions = existingSessions
+    .filter((session: any) => {
+      const expiresAt = new Date(session.expiresAt).getTime();
+      return Number.isFinite(expiresAt) && expiresAt > now;
+    })
+    .sort((left: any, right: any) =>
+      String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+    );
+
+  for (const session of existingSessions) {
+    const expiresAt = new Date(session.expiresAt).getTime();
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+      await ctx.db.delete(session._id);
+    }
+  }
+
+  for (const session of activeSessions.slice(4)) {
+    await ctx.db.delete(session._id);
+  }
+
   const sessionToken = generateRandomHex(32);
   const tokenHash = await sha256Hex(sessionToken);
   await ctx.db.insert("sessions", {
@@ -196,6 +224,10 @@ export async function resolveSession(ctx: any, sessionToken: string | undefined 
     return null;
   }
 
+  if (user.isBanned) {
+    return null;
+  }
+
   return { session, user };
 }
 
@@ -203,6 +235,10 @@ export async function requireUser(ctx: any, sessionToken: string | undefined | n
   const result = await resolveSession(ctx, sessionToken);
   if (!result?.user) {
     throw new Error("Please sign in to continue.");
+  }
+
+  if (result.user.isBanned) {
+    throw new Error("This account has been suspended.");
   }
 
   return result;
@@ -237,4 +273,3 @@ export async function invalidateSession(ctx: any, sessionToken: string | undefin
     await ctx.db.delete(session._id);
   }
 }
-

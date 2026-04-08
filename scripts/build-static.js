@@ -21,11 +21,14 @@ function getBuildConfig() {
     ...readEnvFile(".env.local"),
     ...process.env,
   };
+  const googleMapsBrowserKey = String(env.GOOGLE_MAPS_BROWSER_KEY || "").trim();
 
   return {
     convexUrl: String(env.CONVEX_URL || "").trim(),
-    appMode: String(env.CONVEX_URL || "").trim() ? "convex" : "local",
+    appMode: String(env.CONVEX_URL || "").trim() ? "convex" : "unconfigured",
     clientOrigin: String(env.CLIENT_ORIGIN || "").trim(),
+    nearbyRadiusMeters: Number(env.GOOGLE_NEARBY_RADIUS_METERS || 5000),
+    googleMapsBrowserKey,
   };
 }
 
