@@ -1,5 +1,6 @@
 node_modules/
 .env
+.env.local
 *.db
 uploads/*
 !uploads/.gitkeep
@@ -8,3 +9,6 @@ app.db*
 logs/
 *.log
 coverage/
+.convex/
+convex/_generated/
+public/runtime-config.js

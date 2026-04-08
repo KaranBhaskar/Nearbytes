@@ -1,33 +1,22 @@
 # Nearbytes
 
-Our system is a database of restaurants, their menu items, users' reviews for the corresponding restaurants and items, and the dietary restrictions for each item. The main objective is to assist users in locating restaurants and to provide an idea of their quality through parameters such as ratings, reviews, costs, cuisines, vegan, gluten-free, allergy-free, kosher, or halal. It is essential to have both quantitative and qualitative features to help users choose where to dine.
+A prototype web app for discovering nearby restaurants with a static frontend, a Convex-backed data path, and a local demo fallback for UI work.
 
-## Features Implemented
+## Current Direction
 
-- Updated UI for demo (Mar 25, 2026)
-- User Login/Registration Features
-- Dark/light mode feature
-- Add Restaurants (Owner feature)
-- Add Menu Items (Owner feature)
-- Edit existing restaurant Information (Owner feature)
-- Use My Location feature (User feature)
-- Location Selection feature (User feature)
-- New filter system that filters by dietary restrictions
-- User reviews feature
-- Edit Restaurant Information (Owner feature)
-- View Restaurant Details (Menu, Ratings, Reviews)
-- Moderated Reviews (Moderator Feature)
-- Location-based suggestions (User feature)
+- Frontend runs as a static app from `public/`
+- Restaurant discovery is routed through `public/services/restaurant-service.js`
+- Convex is the active backend integration path
+- If Convex is unavailable, the app can still run in local demo mode with stable fallback restaurant data
+- UI work can continue without requiring every collaborator to have Convex configured
 
 ## Local Run
 
 0. Use Node.js 22 LTS (recommended) or 20 LTS.
-   - This project uses `better-sqlite3`, which may fail to install on newer Node releases without matching prebuilt binaries.
-   - On Windows, if you build native modules from source, install Visual Studio Build Tools with the Windows SDK.
 1. Create env file:
 
 ```bash
-cp .env.example .env
+cp .env.example .env.local
 ```
 
 2. Install dependencies:
@@ -37,11 +26,21 @@ npm install
 npm install cheerio
 ```
 
-3. Seed demo data:
+3. Optional: connect Convex:
 
 ```bash
-npm run seed
+npx convex dev
 ```
+
+This will create/update `.env.local` with your Convex values.
+
+3.5. Optional: preload the demo fallback restaurants into Convex once:
+
+```bash
+npm run convex:seed-demo
+```
+
+If you skip this, the app can still fall back to local demo data without writing to Convex.
 
 4. Start app:
 
@@ -53,107 +52,42 @@ npm run dev
 
 - `http://localhost:3000`
 
-## Demo Accounts
-
-- Owner: `owner@example.com` / `Owner@123`
-- Customer: `customer@example.com` / `Customer@123  nearbytesadmin`
-- Moderator: `nearbytesadmin@email.com` / `nearbytesadmin`
-
-## Smoke Test
-
-Runs core flow checks (auth, nearby listing, reviews, owner operations):
-
-```bash
-npm run smoke
-```
-
-## Testing Suite
-
-This project follows a comprehensive testing plan covering 33 total test cases. Run the full automated suite (25 tests) with:
-
-```bash
-npm test
-```
-
-- Unit Tests (Clear Box): to verify core logic like registration, login, and rating calculations. Run
-
-```bash
-npx jest server/unit-cb.test.js
-```
-
-- Integration Tests (Translucent Box): to verify API and Database interactions. Run
-
-```bash
-npx jest server/translucent.test.js
-```
-
-- Search & Filter Tests: to test dietary filters and location-based discovery. Run
-
-```bash
-npx jest server/search-filter.test.js
-```
-
-- Admin Management Tests: to verify owner creation and unauthorized blocking. Run
-
-```bash
-npx jest server/admin-mgmt.test.js
-```
-
-- Review & Rating Tests: to verify review submission and rating aggregation logic. Run
-
-```bash
-npx jest server/reviews.test.js
-```
-
-- Error Handling (Opaque Box): to test negative paths like duplicate emails and invalid credentials. Run
-
-```bash
-npx jest server/opaque.test.js
-```
-
-- (Note: The remaining 8 System Tests are executed manually in the browser per the Phase 3 Testing Plan).
+If `CONVEX_URL` is missing or Convex cannot be reached, the app will fall back to local demo restaurants so frontend work can continue safely.
 
 ## Google Places Setup (Optional)
 
-Add this in `.env`:
+Add this in `.env.local`:
 
 ```env
 GOOGLE_PLACES_API_KEY=your_key_here
 GOOGLE_NEARBY_RADIUS_METERS=3000
 ```
 
-Without this key, the app still works with local seeded + owner-created restaurants.
+Without this key, the app still works with local demo restaurants.
 
 ## Stack
 
-- Backend: Node.js, Express, SQLite (`better-sqlite3`)
+- Backend data path: Convex
 - Frontend: Vanilla HTML/CSS/JS SPA
-- Auth: JWT token auth
-- Uploads: Multer (local disk uploads)
+- Static dev server: lightweight Node HTTP server in `scripts/`
+- Local fallback mode: browser-side demo restaurant data
 
 ## Project Structure
 
-- `server/app.js`: Express app and API routes
-- `server/index.js`: app bootstrap and listen
-- `server/db.js`: SQLite schema and DB init
-- `server/auth.js`: JWT middleware and auth helpers
-- `server/googlePlaces.js`: Nearby sync from Google Places API
-- `server/seed.js`: demo seed script
-- `server/smoke-test.js`: endpoint smoke checks
+- `convex/schema.ts`: Convex schema
+- `convex/restaurants.ts`: Convex restaurant queries and mutations
+- `convex/fallbackRestaurants.ts`: fallback restaurant records inserted into Convex
 - `public/index.html`: UI shell
 - `public/styles.css`: responsive styles
-- `public/app.js`: frontend app logic
+- `public/app.js`: frontend app orchestration
+- `public/services/restaurant-service.js`: low-coupling frontend data layer
+- `public/services/demo-restaurants.js`: local demo fallback data
+- `scripts/dev-static.js`: static app server and runtime config route
+- `scripts/dev.js`: local dev entrypoint
 
 ## Notes
 
-- Images upload to local `/uploads`.
-- Nearby pagination uses cursor-based offset encoding.
-- Combined rating formula is weighted by rating counts.
-
-## Collaborators
-
-- Talha Hassan
-- Karan Bhaskar
-- Rayan Khan
-- Mohammad Jafari
-- Dev Shah
+- `convex/_generated/` is intentionally ignored and should stay local to whoever is running Convex.
+- `.env.local` is intentionally ignored and should not be committed.
+- The old Express/SQLite backend has been removed from the active architecture.
+- The app reads from Convex when available, but falls back to local demo data if Convex is empty or unavailable.

@@ -1,121 +1,124 @@
-const state = {
-  token: localStorage.getItem('token') || null,
-  user: localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')) : null,
-  location: null,
-  locationBoundingBox: null,
-  locationLabel: null,
-  cursor: null,
-  hasMore: false,
-  loading: false,
-  restaurants: [],
-  selectedRestaurantId: null,
-  ownerRestaurants: [],
-  selectedOwnerRestaurantId: null,
-  dietaryFilters: [],
-  pendingMapLocation: null,
-  favoritesOnly: false,
+import {
+  getRestaurantDataMode,
+  getRestaurantDataModeLabel,
+  getRestaurantDetails,
+  listNearbyRestaurants,
+} from "./services/restaurant-service.js";
+
+const DEFAULT_LOCATION = {
+  lat: 37.7937,
+  lng: -122.395,
+  label: "San Francisco (default)",
 };
 
-const CITY_SEARCH_RADIUS_METERS = 30000;
-const EXTERNAL_RESTAURANT_LIMIT = 60;
+const state = {
+  loading: false,
+  restaurants: [],
+  cursor: null,
+  hasMore: false,
+  totalRestaurants: 0,
+  selectedRestaurantId: null,
+  pendingMapLocation: null,
+  user: null,
+  location: loadStoredLocation() || { lat: DEFAULT_LOCATION.lat, lng: DEFAULT_LOCATION.lng },
+  locationLabel: (loadStoredLocation() || {}).label || DEFAULT_LOCATION.label,
+  dietaryFilters: loadStoredJson("dietaryFilters", []),
+  favoritesOnly: Boolean(loadStoredJson("favoritesOnly", false)),
+};
 
 const els = {
-  userPill: document.getElementById('user-pill'),
-  openAuthBtn: document.getElementById('open-auth'),
-  logoutBtn: document.getElementById('logout-btn'),
-  themeToggleBtn: document.getElementById('theme-toggle'),
-  openLocationModalBtn: document.getElementById('open-location-modal'),
-  selectedLocationText: document.getElementById('selected-location-text'),
-  locationModal: document.getElementById('location-modal'),
-  closeLocationModalBtn: document.getElementById('close-location-modal'),
-  useBrowserLocationBtn: document.getElementById('use-browser-location'),
-  modalLocationQuery: document.getElementById('modal-location-query'),
-  modalSearchLocationBtn: document.getElementById('modal-search-location'),
-  mapSelectionStatus: document.getElementById('map-selection-status'),
-  confirmLocationBtn: document.getElementById('confirm-location'),
-  locationStatus: document.getElementById('location-status'),
-  feedMeta: document.getElementById('feed-meta'),
-  list: document.getElementById('restaurant-list'),
-  listLoader: document.getElementById('list-loader'),
-  sentinel: document.getElementById('list-sentinel'),
-  detailsPanel: document.getElementById('details-panel'),
-  toast: document.getElementById('toast'),
-  ownerPanel: document.getElementById('owner-panel'),
-  ownerRestaurantsList: document.getElementById('owner-restaurants-list'),
-  createRestaurantForm: document.getElementById('create-restaurant-form'),
-  editRestaurantForm: document.getElementById('edit-restaurant-form'),
-  uploadImagesForm: document.getElementById('upload-images-form'),
-  menuItemForm: document.getElementById('menu-item-form'),
-  editRestaurantSelect: document.getElementById('edit-restaurant-select'),
-  imageRestaurantSelect: document.getElementById('image-restaurant-select'),
-  menuRestaurantSelect: document.getElementById('menu-restaurant-select'),
+  userPill: document.getElementById("user-pill"),
+  openAuthBtn: document.getElementById("open-auth"),
+  logoutBtn: document.getElementById("logout-btn"),
+  themeToggleBtn: document.getElementById("theme-toggle"),
+  openLocationModalBtn: document.getElementById("open-location-modal"),
+  selectedLocationText: document.getElementById("selected-location-text"),
+  locationModal: document.getElementById("location-modal"),
+  closeLocationModalBtn: document.getElementById("close-location-modal"),
+  useBrowserLocationBtn: document.getElementById("use-browser-location"),
+  modalLocationQuery: document.getElementById("modal-location-query"),
+  modalSearchLocationBtn: document.getElementById("modal-search-location"),
+  mapSelectionStatus: document.getElementById("map-selection-status"),
+  confirmLocationBtn: document.getElementById("confirm-location"),
+  locationStatus: document.getElementById("location-status"),
+  feedMeta: document.getElementById("feed-meta"),
+  list: document.getElementById("restaurant-list"),
+  listLoader: document.getElementById("list-loader"),
+  sentinel: document.getElementById("list-sentinel"),
+  detailsPanel: document.getElementById("details-panel"),
+  ownerPanel: document.getElementById("owner-panel"),
+  toast: document.getElementById("toast"),
   dietaryFilterInputs: Array.from(document.querySelectorAll('input[name="dietary-filter"]')),
-  clearFiltersBtn: document.getElementById('clear-filters'),
-  favoritesFilterInput: document.getElementById('favorites-filter'),
+  clearFiltersBtn: document.getElementById("clear-filters"),
+  favoritesFilterInput: document.getElementById("favorites-filter"),
 };
 
 let observer;
 let locationMap = null;
 let locationMarker = null;
-let favorites = JSON.parse(localStorage.getItem("favorites") || "[]");
+let favorites = loadStoredJson("favorites", []);
 
-function isFavorite(id) {
-  return favorites.includes(id);
+function loadStoredJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (_err) {
+    return fallback;
+  }
 }
 
-function toggleFavorite(id) {
-  if (favorites.includes(id)) {
-    favorites = favorites.filter(f => f !== id);
-  } else {
-    favorites.push(id);
+function loadStoredLocation() {
+  const value = loadStoredJson("lastLocation", null);
+  if (!value || !Number.isFinite(value.lat) || !Number.isFinite(value.lng)) {
+    return null;
   }
 
-  localStorage.setItem("favorites", JSON.stringify(favorites));
+  return value;
+}
+
+function persistDiscoveryState() {
+  localStorage.setItem("dietaryFilters", JSON.stringify(state.dietaryFilters));
+  localStorage.setItem("favoritesOnly", JSON.stringify(state.favoritesOnly));
+  localStorage.setItem(
+    "lastLocation",
+    JSON.stringify({
+      lat: state.location.lat,
+      lng: state.location.lng,
+      label: state.locationLabel,
+    }),
+  );
+}
+
+function normalizeDietaryTag(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, "-");
+  return normalized === "gluten_free" ? "gluten-free" : normalized;
+}
+
+function titleCaseWords(value) {
+  return String(value || "")
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function showToast(message, isError = false) {
   els.toast.textContent = message;
-  els.toast.classList.remove('hidden');
+  els.toast.classList.remove("hidden");
   const styles = getComputedStyle(document.body);
   els.toast.style.background = isError
-    ? styles.getPropertyValue('--toast-error').trim()
-    : styles.getPropertyValue('--toast-success').trim();
+    ? styles.getPropertyValue("--toast-error").trim()
+    : styles.getPropertyValue("--toast-success").trim();
+
   window.clearTimeout(showToast.timeoutId);
   showToast.timeoutId = window.setTimeout(() => {
-    els.toast.classList.add('hidden');
-  }, 2600);
+    els.toast.classList.add("hidden");
+  }, 2800);
 }
 
-async function api(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  if (!(options.body instanceof FormData)) {
-    headers.set('Content-Type', 'application/json');
-  }
-
-  if (state.token) {
-    headers.set('Authorization', `Bearer ${state.token}`);
-  }
-
-  const response = await fetch(path, {
-    ...options,
-    headers,
-    body:
-      options.body && !(options.body instanceof FormData) ? JSON.stringify(options.body) : options.body,
-  });
-
-  let data = null;
-  try {
-    data = await response.json();
-  } catch (_err) {
-    data = null;
-  }
-
-  if (!response.ok) {
-    const message = data && data.error ? data.error : 'Request failed';
-    throw new Error(message);
-  }
-
-  return data;
+function ratingText(value, count) {
+  if (!value || !count) return "No ratings yet";
+  return `${Number(value).toFixed(1)} (${count})`;
 }
 
 function haversineKm(lat1, lng1, lat2, lng2) {
@@ -130,483 +133,341 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   return 2 * earthRadiusKm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function titleCaseWords(value) {
-  return String(value || '')
-    .split(/[\s_-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+function isFavorite(id) {
+  return favorites.includes(String(id));
 }
 
-function parseCuisineList(value) {
-  return String(value || '')
-    .split(/[;,]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item) => titleCaseWords(item));
-}
-
-function normalizeDietaryTag(value) {
-  const normalized = String(value || '').trim().toLowerCase().replace(/\s+/g, '-');
-  return normalized === 'gluten-free' || normalized === 'gluten_free' ? 'gluten-free' : normalized;
-}
-
-function expandDietaryTags(tags) {
-  const expanded = new Set((tags || []).map((tag) => normalizeDietaryTag(tag)));
-
-  // Vegan restaurants are also vegetarian for filtering purposes.
-  if (expanded.has('vegan')) {
-    expanded.add('vegetarian');
+function toggleFavorite(id) {
+  const normalizedId = String(id);
+  if (favorites.includes(normalizedId)) {
+    favorites = favorites.filter((favoriteId) => favoriteId !== normalizedId);
+  } else {
+    favorites.push(normalizedId);
   }
 
-  return Array.from(expanded);
+  localStorage.setItem("favorites", JSON.stringify(favorites));
 }
 
-function hasTruthyDietaryValue(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  return ['yes', 'only', 'limited', 'true', '1'].includes(normalized);
-}
-
-function inferDietaryTags(tags = {}) {
-  const dietaryTags = new Set();
-  const searchableText = Object.values(tags)
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-  const cuisineText = String(tags.cuisine || '').toLowerCase();
-
-  if (hasTruthyDietaryValue(tags['diet:vegan']) || searchableText.includes('vegan')) {
-    dietaryTags.add('vegan');
-  }
-
-  if (
-    hasTruthyDietaryValue(tags['diet:vegetarian']) ||
-    cuisineText.includes('vegetarian') ||
-    searchableText.includes('vegetarian')
-  ) {
-    dietaryTags.add('vegetarian');
-  }
-
-  if (hasTruthyDietaryValue(tags['diet:halal']) || searchableText.includes('halal')) {
-    dietaryTags.add('halal');
-  }
-
-  if (hasTruthyDietaryValue(tags['diet:kosher']) || searchableText.includes('kosher')) {
-    dietaryTags.add('kosher');
-  }
-
-  if (
-    hasTruthyDietaryValue(tags['diet:gluten_free']) ||
-    hasTruthyDietaryValue(tags['diet:gluten-free']) ||
-    searchableText.includes('gluten free') ||
-    searchableText.includes('gluten-free')
-  ) {
-    dietaryTags.add('gluten-free');
-  }
-
-  return expandDietaryTags(Array.from(dietaryTags));
-}
-
-function restaurantMatchesDietaryFilters(restaurant, selectedFilters) {
-  if (!selectedFilters.length) {
-    return true;
-  }
-
-  const normalizedDietaryTags = expandDietaryTags(restaurant.dietaryTags || []);
-  const keywordSource = [
-    restaurant.name,
-    restaurant.description,
-    restaurant.address,
-    ...(restaurant.cuisineTags || []),
-    ...(restaurant.dietaryTags || []),
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-
-  return selectedFilters.every((selectedTag) => {
-    const normalizedSelectedTag = normalizeDietaryTag(selectedTag);
-    const keywordVariant = normalizedSelectedTag.replace(/-/g, ' ');
-
-    return (
-      normalizedDietaryTags.includes(normalizedSelectedTag) ||
-      keywordSource.includes(normalizedSelectedTag) ||
-      keywordSource.includes(keywordVariant)
-    );
-  });
-}
-
-function buildAddressFromTags(tags = {}) {
-  const parts = [
-    tags['addr:housenumber'],
-    tags['addr:street'],
-    tags['addr:city'] || tags['addr:town'] || tags['addr:village'],
-    tags['addr:state'],
-    tags['addr:postcode'],
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .replace(/\s+,/g, ',')
-    .trim();
-
-  return parts || tags['addr:full'] || 'Address not available';
-}
-
-function formatBoundingBox(boundingBox) {
-  if (!Array.isArray(boundingBox) || boundingBox.length !== 4) {
-    return '';
-  }
-
-  return boundingBox.join(',');
-}
-
-async function fetchExternalRestaurants(lat, lng) {
-  const params = new URLSearchParams({
-    lat: String(lat),
-    lng: String(lng),
+async function fetchJson(url) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+    },
   });
 
-  if (state.locationBoundingBox) {
-    params.set('bbox', formatBoundingBox(state.locationBoundingBox));
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
   }
 
-  const data = await api(`/api/location/restaurants?${params.toString()}`);
-
-  return (data.items || []).slice(0, EXTERNAL_RESTAURANT_LIMIT);
+  return response.json();
 }
 
-function saveAuth(token, user) {
-  state.token = token;
-  state.user = user;
-  localStorage.setItem('token', token);
-  localStorage.setItem('user', JSON.stringify(user));
+async function geocodeQuery(query) {
+  const url = new URL("https://nominatim.openstreetmap.org/search");
+  url.searchParams.set("q", query);
+  url.searchParams.set("format", "jsonv2");
+  url.searchParams.set("limit", "1");
+  url.searchParams.set("addressdetails", "1");
+
+  const results = await fetchJson(url.toString());
+  if (!Array.isArray(results) || results.length === 0) {
+    throw new Error("Location not found");
+  }
+
+  const best = results[0];
+
+  return {
+    lat: Number(best.lat),
+    lng: Number(best.lon),
+    label: best.display_name,
+    boundingBox: Array.isArray(best.boundingbox)
+      ? best.boundingbox.map((value) => Number(value))
+      : null,
+  };
 }
 
-function clearAuth() {
-  state.token = null;
-  state.user = null;
-  localStorage.removeItem('token');
-  localStorage.removeItem('user');
-}
+async function reverseGeocode(lat, lng) {
+  const url = new URL("https://nominatim.openstreetmap.org/reverse");
+  url.searchParams.set("lat", String(lat));
+  url.searchParams.set("lon", String(lng));
+  url.searchParams.set("format", "jsonv2");
 
-function navigateToAuthPage() {
-  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  window.location.assign(`/auth.html?returnTo=${encodeURIComponent(returnTo)}`);
+  const data = await fetchJson(url.toString());
+  const address = data.address || {};
+
+  return (
+    address.city ||
+    address.town ||
+    address.village ||
+    address.state ||
+    data.display_name ||
+    "Unknown location"
+  );
 }
 
 function renderAuthUI() {
-  if (state.user) {
-    els.userPill.textContent = `${state.user.name} (${state.user.role})`;
-    els.openAuthBtn.classList.add('hidden');
-    els.logoutBtn.classList.remove('hidden');
-  } else {
-    els.userPill.textContent = 'Guest';
-    els.openAuthBtn.classList.remove('hidden');
-    els.logoutBtn.classList.add('hidden');
-  }
-
-  const showOwner = state.user && state.user.role === 'owner';
-  els.ownerPanel.classList.toggle('hidden', !showOwner);
-
-  if (showOwner) {
-    loadOwnerRestaurants().catch((err) => showToast(err.message, true));
-  }
-}
-
-function ratingText(value, count) {
-  if (!value || !count) return 'No ratings yet';
-  return `${Number(value).toFixed(1)} (${count})`;
+  els.userPill.textContent = "Guest mode";
+  els.openAuthBtn.textContent = "Auth Coming Next";
+  els.openAuthBtn.classList.remove("hidden");
+  els.logoutBtn.classList.add("hidden");
+  els.ownerPanel.classList.add("hidden");
 }
 
 function activeDietaryFilterText() {
-  const activeFilters = [...state.dietaryFilters];
+  const labels = state.dietaryFilters.map((tag) => titleCaseWords(tag));
+  if (state.favoritesOnly) {
+    labels.push("Favorites");
+  }
+
+  return labels.length ? ` | Filters: ${labels.join(", ")}` : "";
+}
+
+function getFilteredRestaurants() {
+  if (!state.favoritesOnly) {
+    return [...state.restaurants];
+  }
+
+  return state.restaurants.filter((restaurant) => isFavorite(restaurant.id));
+}
+
+function updateFeedMeta() {
+  const filteredCount = getFilteredRestaurants().length;
+  const label = state.locationLabel || DEFAULT_LOCATION.label;
+
+  if (!state.restaurants.length) {
+    els.feedMeta.textContent = `No restaurants found near ${label}${activeDietaryFilterText()}`;
+    return;
+  }
 
   if (state.favoritesOnly) {
-    activeFilters.push('Favorites');
+    els.feedMeta.textContent = `${filteredCount} of ${state.totalRestaurants} restaurants shown near ${label}${activeDietaryFilterText()}`;
+    return;
   }
 
-  return activeFilters.length ? ` | Filters: ${activeFilters.join(', ')}` : '';
-}
-
-function renderStars(rating) {
-  const fullStars = "★".repeat(rating);
-  const emptyStars = "☆".repeat(5 - rating);
-  return fullStars + emptyStars;
-}
-
-
-const CUISINE_PHOTOS = {
-  burger:     'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&q=80',
-  burgers:    'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&q=80',
-  'fast food':'https://images.unsplash.com/photo-1561758033-d89a9ad46330?w=400&q=80',
-  fastfood:   'https://images.unsplash.com/photo-1561758033-d89a9ad46330?w=400&q=80',
-  pizza:      'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=400&q=80',
-  sushi:      'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=400&q=80',
-  japanese:   'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=400&q=80',
-  ramen:      'https://images.unsplash.com/photo-1569050467447-ce54b3bbc37d?w=400&q=80',
-  chinese:    'https://images.unsplash.com/photo-1563245372-f21724e3856d?w=400&q=80',
-  indian:     'https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=400&q=80',
-  curry:      'https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=400&q=80',
-  mexican:    'https://images.unsplash.com/photo-1565299585323-38d6b0865b47?w=400&q=80',
-  tacos:      'https://images.unsplash.com/photo-1565299585323-38d6b0865b47?w=400&q=80',
-  italian:    'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=400&q=80',
-  pasta:      'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=400&q=80',
-  sandwich:   'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=400&q=80',
-  sandwiches: 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=400&q=80',
-  sub:        'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=400&q=80',
-  cafe:       'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=400&q=80',
-  coffee:     'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=400&q=80',
-  breakfast:  'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&q=80',
-  brunch:     'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&q=80',
-  chicken:    'https://images.unsplash.com/photo-1598103442097-8b74394b95c2?w=400&q=80',
-  seafood:    'https://images.unsplash.com/photo-1565680018434-b513d5e5fd47?w=400&q=80',
-  fish:       'https://images.unsplash.com/photo-1565680018434-b513d5e5fd47?w=400&q=80',
-  thai:       'https://images.unsplash.com/photo-1559314809-0d155014e29e?w=400&q=80',
-  greek:      'https://images.unsplash.com/photo-1544025162-d76538485491?w=400&q=80',
-  mediterranean: 'https://images.unsplash.com/photo-1544025162-d76538485491?w=400&q=80',
-  steak:      'https://images.unsplash.com/photo-1546833998-877b37c2e5c6?w=400&q=80',
-  bbq:        'https://images.unsplash.com/photo-1546833998-877b37c2e5c6?w=400&q=80',
-  grill:      'https://images.unsplash.com/photo-1546833998-877b37c2e5c6?w=400&q=80',
-  vegan:      'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=400&q=80',
-  vegetarian: 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=400&q=80',
-  korean:     'https://images.unsplash.com/photo-1590301157890-4810ed352733?w=400&q=80',
-  halal:      'https://images.unsplash.com/photo-1544025162-d76538485491?w=400&q=80',
-};
-
-const DEFAULT_FOOD_PHOTO = 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&q=80';
-
-function getCuisineStockPhoto(cuisineTags, restaurantName) {
-  const tags = (cuisineTags || []).map(t => t.toLowerCase());
-  const nameLower = (restaurantName || '').toLowerCase();
-
-  for (const tag of tags) {
-    if (CUISINE_PHOTOS[tag]) return CUISINE_PHOTOS[tag];
-    for (const key of Object.keys(CUISINE_PHOTOS)) {
-      if (tag.includes(key) || key.includes(tag)) return CUISINE_PHOTOS[key];
-    }
-  }
-
-  for (const key of Object.keys(CUISINE_PHOTOS)) {
-    if (nameLower.includes(key)) return CUISINE_PHOTOS[key];
-  }
-
-  return DEFAULT_FOOD_PHOTO;
+  els.feedMeta.textContent = `${state.totalRestaurants} restaurants found near ${label}${activeDietaryFilterText()}`;
 }
 
 function renderRestaurantCard(restaurant) {
-  const card = document.createElement('article');
-  card.className = 'restaurant-card';
-
-  const tagsHtml = Array.isArray(restaurant.dietaryTags)
-  ? restaurant.dietaryTags
-      .map((tag) => `<span class="metric-pill">${tag}</span>`)
-      .join('')
-  : '';
+  const card = document.createElement("article");
+  card.className = "restaurant-card";
 
   if (state.selectedRestaurantId === restaurant.id) {
-    card.classList.add('selected');
+    card.classList.add("selected");
   }
 
-  const cardImageSrc = restaurant.coverImage
-    || (restaurant.googlePhotoRef ? `/api/place-photo?ref=${encodeURIComponent(restaurant.googlePhotoRef)}` : null)
-    || getCuisineStockPhoto(restaurant.cuisineTags, restaurant.name);
+  const dietaryTagsHtml = (restaurant.dietaryTags || [])
+    .map((tag) => `<span class="metric-pill">${titleCaseWords(tag)}</span>`)
+    .join("");
 
-  const fallbackSrc = getCuisineStockPhoto([], '');
+  const sourceLabel =
+    restaurant.source === "fallback" ? "Demo fallback" : titleCaseWords(restaurant.source);
+
+  const imageSrc =
+    restaurant.coverImage || "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=1200&q=80";
 
   card.innerHTML = `
-  <button class="fav-btn ${isFavorite(restaurant.id) ? 'active' : ''}" data-id="${restaurant.id}">🔖</button>
-    <img src="${cardImageSrc}" alt="${restaurant.name}" loading="lazy" onerror="this.onerror=null;this.src='${fallbackSrc}'" />
+    <button class="fav-btn ${isFavorite(restaurant.id) ? "active" : ""}" data-id="${restaurant.id}">🔖</button>
+    <img src="${imageSrc}" alt="${restaurant.name}" loading="lazy" />
     <div class="restaurant-card-body">
       <h3>${restaurant.name}</h3>
       <p class="muted">${restaurant.address}</p>
       <div class="metrics">
         <span class="metric-pill">${restaurant.distanceKm.toFixed(2)} km away</span>
-        ${tagsHtml}
+        ${dietaryTagsHtml}
         <span class="metric-pill">Combined: ${ratingText(
           restaurant.combinedRating,
-          restaurant.combinedRatingCount
+          restaurant.combinedRatingCount,
         )}</span>
-        <span class="metric-pill">Google: ${ratingText(
-          restaurant.googleRating,
-          restaurant.googleRatingCount
-        )}</span>
-        <span class="metric-pill">App: ${ratingText(
-          restaurant.appRating,
-          restaurant.appRatingCount
-        )}</span>
+        <span class="metric-pill">${sourceLabel}</span>
       </div>
     </div>
   `;
 
-  card.addEventListener('click', () => {
+  card.addEventListener("click", () => {
     state.selectedRestaurantId = restaurant.id;
     renderRestaurantList();
-
     loadRestaurantDetails(restaurant.id).catch((err) => showToast(err.message, true));
   });
 
+  const favoriteButton = card.querySelector(".fav-btn");
+  favoriteButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleFavorite(restaurant.id);
+    favoriteButton.classList.toggle("active", isFavorite(restaurant.id));
 
-  const favBtn = card.querySelector('.fav-btn');
-    if (favBtn) {
-      favBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-
-        if (!state.user) {
-          showToast('Sign in to save this restaurant as a favorite.', true);
-          return;
-        }
-
-        toggleFavorite(restaurant.id);
-        favBtn.classList.toggle('active', isFavorite(restaurant.id));
-
-        const detailsFavBtn = els.detailsPanel.querySelector('.fav-btn.large');
-        if (detailsFavBtn && state.selectedRestaurantId === restaurant.id) {
-          detailsFavBtn.classList.toggle('active', isFavorite(restaurant.id));
-        }
-      });
+    if (state.selectedRestaurantId === restaurant.id) {
+      const detailFavoriteButton = els.detailsPanel.querySelector(".fav-btn.large");
+      if (detailFavoriteButton) {
+        detailFavoriteButton.classList.toggle("active", isFavorite(restaurant.id));
+      }
     }
+
+    if (state.favoritesOnly) {
+      renderRestaurantList();
+    }
+  });
 
   return card;
 }
 
-
-
-function getFilteredRestaurants() {
-  const selectedFilters = els.dietaryFilterInputs
-    .filter((input) => input.checked)
-    .map((input) => normalizeDietaryTag(input.value));
-
-  let restaurants = [...state.restaurants];
-
-  if (selectedFilters.length > 0) {
-    restaurants = restaurants.filter((restaurant) =>
-      restaurantMatchesDietaryFilters(restaurant, selectedFilters)
-    );
-  }
-
-  if (state.favoritesOnly) {
-    restaurants = restaurants
-      .filter((restaurant) => isFavorite(restaurant.id))
-      .sort((a, b) => Number(isFavorite(b.id)) - Number(isFavorite(a.id)));
-  }
-
-  return restaurants;
-}
-
-function updateFeedMeta() {
-  if (!state.location) {
-    els.feedMeta.textContent = 'No location selected';
-    return;
-  }
-
-  const filteredCount = getFilteredRestaurants().length;
-  const totalCount = state.restaurants.length;
-  const label = state.locationLabel || 'selected area';
-
-  if (totalCount === 0) {
-    els.feedMeta.textContent = `No restaurants found near ${label}${activeDietaryFilterText()}`;
-    return;
-  }
-
-  if (state.dietaryFilters.length || state.favoritesOnly) {
-    els.feedMeta.textContent = `${filteredCount} of ${totalCount} restaurants shown near ${label}${activeDietaryFilterText()}`;
-    return;
-  }
-
-  els.feedMeta.textContent = `${totalCount} restaurants found near ${label}`;
-}
-
 function renderRestaurantList() {
-  els.list.innerHTML = '';
+  els.list.innerHTML = "";
   updateFeedMeta();
 
-  if (!state.location) {
-    els.list.innerHTML = '<p class="muted">Allow location or search one to start discovering restaurants.</p>';
-    return;
-  }
+  const restaurants = getFilteredRestaurants();
 
-  if (state.restaurants.length === 0 && !state.loading) {
+  if (!restaurants.length && !state.loading) {
     els.list.innerHTML = '<p class="muted">No restaurants found for this location.</p>';
     return;
   }
 
-  const restaurantsToShow = getFilteredRestaurants();
-
-  if (restaurantsToShow.length === 0) {
-    els.list.innerHTML = '<p class="muted">No restaurants match this filter.</p>';
-    return;
-  }
-
-  restaurantsToShow.forEach((restaurant) => {
+  restaurants.forEach((restaurant) => {
     els.list.appendChild(renderRestaurantCard(restaurant));
   });
 }
 
 function renderFeedLoader() {
   if (state.loading) {
-    els.listLoader.textContent = 'Loading more restaurants...';
+    els.listLoader.textContent = "Loading restaurants...";
     return;
   }
 
   if (!state.hasMore && state.restaurants.length > 0) {
-    els.listLoader.textContent = 'No more restaurants to load.';
+    els.listLoader.textContent = "No more restaurants to load.";
     return;
   }
 
-  els.listLoader.textContent = '';
+  els.listLoader.textContent = "";
 }
 
-async function geocodeQuery(query) {
-  const best = await api(`/api/location/search?q=${encodeURIComponent(query)}`);
-  return {
-    lat: Number(best.lat),
-    lng: Number(best.lng),
-    label: best.label,
-    boundingBox: best.boundingBox || null,
-  };
+function renderDetailsPlaceholder() {
+  els.detailsPanel.innerHTML =
+    "<h2>Restaurant Details</h2><p class=\"muted\">Select a restaurant to view menu and photos.</p>";
 }
 
-async function reverseGeocode(lat, lng) {
-  const data = await api(`/api/location/reverse?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`);
-  return data.label || 'Unknown Location';
+async function loadRestaurantDetails(restaurantId) {
+  const detail = await getRestaurantDetails({
+    id: restaurantId,
+    originLat: state.location.lat,
+    originLng: state.location.lng,
+  });
+
+  if (!detail) {
+    throw new Error("Restaurant not found");
+  }
+
+  const restaurant = detail.restaurant;
+  const images = detail.images || [];
+  const menuItems = detail.menuItems || [];
+
+  els.detailsPanel.innerHTML = `
+    <div style="position: relative;">
+      <h2>${restaurant.name}</h2>
+      <button class="fav-btn large ${isFavorite(restaurant.id) ? "active" : ""}" data-id="${restaurant.id}">🔖</button>
+    </div>
+    <p class="muted">${restaurant.address}</p>
+    <p>${restaurant.description || "No description provided yet."}</p>
+
+    <div class="metrics">
+      ${(restaurant.dietaryTags || [])
+        .map((tag) => `<span class="metric-pill">${titleCaseWords(tag)}</span>`)
+        .join("")}
+      <span class="metric-pill">Combined: ${ratingText(
+        restaurant.combinedRating,
+        restaurant.combinedRatingCount,
+      )}</span>
+      <span class="metric-pill">${
+        restaurant.source === "fallback" ? "Demo fallback data" : titleCaseWords(restaurant.source)
+      }</span>
+    </div>
+
+    <h3>Information</h3>
+    <div>
+      <p><strong>Address:</strong> ${restaurant.address}</p>
+      ${restaurant.phone ? `<p><strong>Phone:</strong> ${restaurant.phone}</p>` : ""}
+      ${
+        restaurant.website
+          ? `<p><strong>Website:</strong> <a href="${restaurant.website}" target="_blank" rel="noreferrer">${restaurant.website}</a></p>`
+          : ""
+      }
+      ${restaurant.openingHours ? `<p><strong>Hours:</strong> ${restaurant.openingHours}</p>` : ""}
+    </div>
+
+    <h3>Gallery</h3>
+    <div class="detail-gallery">
+      ${
+        images.length
+          ? images.map((image) => `<img src="${image.url}" alt="${restaurant.name}" loading="lazy" />`).join("")
+          : '<p class="muted">No photos yet.</p>'
+      }
+    </div>
+
+    <h3>Menu</h3>
+    <div>
+      ${
+        menuItems.length
+          ? menuItems
+              .map(
+                (item) => `
+                  <div class="menu-item">
+                    <strong>${item.name}</strong> - $${Number(item.price).toFixed(2)}
+                    <p class="muted">${item.description || ""}</p>
+                  </div>
+                `,
+              )
+              .join("")
+          : restaurant.menuUrl
+            ? `<p><a href="${restaurant.menuUrl}" target="_blank" rel="noreferrer">View restaurant menu</a></p>`
+            : '<p class="muted">No menu items yet.</p>'
+      }
+    </div>
+
+    <h3>Reviews</h3>
+    <p class="muted">Auth and reviews are the next migration step. Discovery currently runs through ${getRestaurantDataModeLabel()}.</p>
+  `;
+
+  const detailFavoriteButton = els.detailsPanel.querySelector(".fav-btn.large");
+  detailFavoriteButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleFavorite(restaurant.id);
+    detailFavoriteButton.classList.toggle("active", isFavorite(restaurant.id));
+    renderRestaurantList();
+  });
 }
 
 function updateSelectedLocationText() {
-  els.selectedLocationText.textContent = state.locationLabel || 'None selected';
+  els.selectedLocationText.textContent = state.locationLabel || "None selected";
 }
 
 function openLocationModal() {
-  els.locationModal.classList.remove('hidden');
-
-  window.setTimeout(() => {
-    initLocationMap();
-  }, 0);
+  els.locationModal.classList.remove("hidden");
+  window.setTimeout(initLocationMap, 0);
 }
 
 function closeLocationModal() {
-  els.locationModal.classList.add('hidden');
+  els.locationModal.classList.add("hidden");
 }
 
 function setPendingMapLocation(lat, lng, label = null) {
-  state.pendingMapLocation = { lat, lng, label, boundingBox: null };
+  state.pendingMapLocation = { lat, lng, label };
 
   if (!locationMarker) {
     locationMarker = L.marker([lat, lng], { draggable: true }).addTo(locationMap);
 
-    locationMarker.on('dragend', async () => {
-      const pos = locationMarker.getLatLng();
+    locationMarker.on("dragend", async () => {
+      const position = locationMarker.getLatLng();
       state.pendingMapLocation = {
-        lat: pos.lat,
-        lng: pos.lng,
-        label: state.pendingMapLocation?.label || 'Dropped pin location',
+        lat: position.lat,
+        lng: position.lng,
+        label: state.pendingMapLocation?.label || "Pinned location",
       };
 
       try {
-        const readable = await reverseGeocode(pos.lat, pos.lng);
+        const readable = await reverseGeocode(position.lat, position.lng);
         state.pendingMapLocation.label = readable;
         els.mapSelectionStatus.textContent = `Selected: ${readable}`;
       } catch (_err) {
-        els.mapSelectionStatus.textContent = `Selected pin at ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
+        els.mapSelectionStatus.textContent = `Selected pin at ${position.lat.toFixed(5)}, ${position.lng.toFixed(5)}`;
       }
     });
   } else {
@@ -621,13 +482,13 @@ function setPendingMapLocation(lat, lng, label = null) {
 
 function initLocationMap() {
   if (!locationMap) {
-    locationMap = L.map('location-map').setView([37.7749, -122.4194], 12);
+    locationMap = L.map("location-map").setView([DEFAULT_LOCATION.lat, DEFAULT_LOCATION.lng], 12);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
     }).addTo(locationMap);
 
-    locationMap.on('click', async (event) => {
+    locationMap.on("click", async (event) => {
       const { lat, lng } = event.latlng;
       setPendingMapLocation(lat, lng);
 
@@ -645,18 +506,16 @@ function initLocationMap() {
     locationMap.invalidateSize();
   }, 100);
 
-  if (state.location) {
-    setPendingMapLocation(state.location.lat, state.location.lng, state.locationLabel || 'Current selection');
-  }
+  setPendingMapLocation(state.location.lat, state.location.lng, state.locationLabel);
 }
 
 async function useBrowserLocationInModal() {
   if (!navigator.geolocation) {
-    showToast('Geolocation is not supported in this browser', true);
+    showToast("Geolocation is not supported in this browser.", true);
     return;
   }
 
-  els.mapSelectionStatus.textContent = 'Getting your location...';
+  els.mapSelectionStatus.textContent = "Getting your location...";
 
   navigator.geolocation.getCurrentPosition(
     async (position) => {
@@ -668,40 +527,37 @@ async function useBrowserLocationInModal() {
         setPendingMapLocation(lat, lng, readable);
         state.pendingMapLocation.label = readable;
       } catch (_err) {
-        setPendingMapLocation(lat, lng, 'Your current location');
+        setPendingMapLocation(lat, lng, "Your current location");
       }
     },
     (error) => {
-      showToast(error.message || 'Unable to retrieve your location', true);
+      showToast(error.message || "Unable to retrieve your location.", true);
       els.mapSelectionStatus.textContent =
-        'Location access denied. Search manually or click the map to place a pin.';
-    }
+        "Location access denied. Search manually or click the map to place a pin.";
+    },
   );
 }
 
 async function searchLocationInModal() {
-  const query = String(els.modalLocationQuery.value || '').trim();
-
+  const query = String(els.modalLocationQuery.value || "").trim();
   if (!query) {
-    showToast('Enter a city, address, or zip', true);
+    showToast("Enter a city, address, or zip.", true);
     return;
   }
 
   try {
-    els.mapSelectionStatus.textContent = 'Searching location...';
+    els.mapSelectionStatus.textContent = "Searching location...";
     const location = await geocodeQuery(query);
     setPendingMapLocation(location.lat, location.lng, location.label);
-    state.pendingMapLocation.label = location.label;
-    state.pendingMapLocation.boundingBox = location.boundingBox || null;
   } catch (err) {
     showToast(err.message, true);
-    els.mapSelectionStatus.textContent = 'Search failed. Try another query.';
+    els.mapSelectionStatus.textContent = "Search failed. Try another query.";
   }
 }
 
 async function confirmSelectedLocation() {
   if (!state.pendingMapLocation) {
-    showToast('Choose a location on the map first', true);
+    showToast("Choose a location on the map first.", true);
     return;
   }
 
@@ -709,22 +565,19 @@ async function confirmSelectedLocation() {
     lat: state.pendingMapLocation.lat,
     lng: state.pendingMapLocation.lng,
   };
-  state.locationBoundingBox = state.pendingMapLocation.boundingBox || null;
-
-  state.locationLabel = state.pendingMapLocation.label || 'Selected area';
-  els.locationStatus.textContent = `Showing restaurants near ${state.locationLabel}`;
+  state.locationLabel = state.pendingMapLocation.label || "Selected area";
+  persistDiscoveryState();
   updateSelectedLocationText();
+  els.locationStatus.textContent = `Showing restaurants near ${state.locationLabel}`;
   closeLocationModal();
 
-  try {
-    await resetAndReloadRestaurants();
-  } catch (err) {
-    showToast(err.message, true);
-  }
+  await resetAndReloadRestaurants();
 }
 
 function setupInfiniteScroll() {
-  if (observer) observer.disconnect();
+  if (observer) {
+    observer.disconnect();
+  }
 
   observer = new IntersectionObserver(
     (entries) => {
@@ -733,702 +586,38 @@ function setupInfiniteScroll() {
         loadMoreRestaurants().catch((err) => showToast(err.message, true));
       }
     },
-    { rootMargin: '400px 0px 400px 0px' }
+    { rootMargin: "300px 0px 300px 0px" },
   );
 
   observer.observe(els.sentinel);
 }
 
 async function loadMoreRestaurants() {
-  if (!state.location || state.loading || !state.hasMore) return;
+  if (state.loading || !state.hasMore) {
+    return;
+  }
 
   state.loading = true;
   renderFeedLoader();
 
-  const params = new URLSearchParams({
-    lat: String(state.location.lat),
-    lng: String(state.location.lng),
-    limit: '20',
-  });
-
-  if (state.dietaryFilters.length) {
-    params.set('dietary', state.dietaryFilters.join(','));
-  }
-
-  if (state.cursor) {
-    params.set('cursor', state.cursor);
-  }
-
   try {
-    const data = await api(`/api/restaurants/nearby?${params.toString()}`);
-    const nextItems = Array.isArray(data.items) ? data.items : [];
+    const data = await listNearbyRestaurants({
+      lat: state.location.lat,
+      lng: state.location.lng,
+      cursor: state.cursor || undefined,
+      limit: 20,
+      dietary: state.dietaryFilters,
+    });
 
+    const nextItems = Array.isArray(data.items) ? data.items : [];
     state.restaurants = state.cursor ? [...state.restaurants, ...nextItems] : nextItems;
     state.cursor = data.nextCursor || null;
     state.hasMore = Boolean(data.hasMore);
+    state.totalRestaurants = Number(data.total || state.restaurants.length);
     renderRestaurantList();
-  } catch (err) {
-    showToast(err.message, true);
   } finally {
     state.loading = false;
     renderFeedLoader();
-  }
-}
-
-function formatDate(iso) {
-  if (!iso) return '';
-  const date = new Date(iso);
-  return date.toLocaleDateString();
-}
-
-function renderReviewForm(detail, reviews) {
-  if (!state.user) {
-    return '<p class="muted">Sign up or log in to post a review.</p>';
-  }
-
-  if (state.user.role !== 'customer') {
-    return '<p class="muted">Only customer accounts can post reviews. Moderator accounts can remove reviews.</p>';
-  }
-
-  const myReview = detail.myReview;
-  const myReviewId = myReview
-    ? myReview.id
-    : (reviews.find((item) => item.userId === state.user.id) || {}).id || '';
-
-  return `
-    <form id="review-form" class="review-form">
-      <h3>${myReview ? 'Update Your Review' : 'Write a Review'}</h3>
-      <div class="star-rating">
-        <button type="button" class="star-btn" data-value="1">★</button>
-        <button type="button" class="star-btn" data-value="2">★</button>
-        <button type="button" class="star-btn" data-value="3">★</button>
-        <button type="button" class="star-btn" data-value="4">★</button>
-        <button type="button" class="star-btn" data-value="5">★</button>
-      </div>
-
-      <input type="hidden" name="rating" id="review-rating" value="${myReview ? myReview.rating : 0}" />
-      <textarea name="comment" placeholder="Share your experience">${
-        myReview && myReview.comment ? myReview.comment : ''
-      }</textarea>
-      <button class="btn btn-primary" type="submit">${myReview ? 'Save Review' : 'Post Review'}</button>
-      ${myReview ? '<button class="btn btn-outline" type="button" id="delete-review">Delete Review</button>' : ''}
-      <input type="hidden" name="reviewId" value="${myReviewId || ''}" />
-    </form>
-  `;
-}
-
-function renderModeratorReviewActions(restaurantId, review) {
-  if (!state.user || state.user.role !== 'moderator') {
-    return '';
-  }
-
-  return `
-    <div class="review-actions">
-      <button
-        type="button"
-        class="btn btn-outline moderator-delete-review"
-        data-restaurant-id="${restaurantId}"
-        data-review-id="${review.id}"
-      >
-        Remove Review
-      </button>
-    </div>
-  `;
-}
-
-async function loadRestaurantDetails(restaurantId) {
-  const [detail, reviewsData] = await Promise.all([
-    api(`/api/restaurants/${restaurantId}`),
-    api(`/api/restaurants/${restaurantId}/reviews`),
-  ]);
-
-  const restaurant = detail.restaurant;
-  const images = detail.images || [];
-  const menuItems = detail.menuItems || [];
-  const reviews = reviewsData.reviews || [];
-  const phoneHtml = restaurant.phone ? `<p><strong>Phone:</strong> ${restaurant.phone}</p>` : '';
-  const websiteHtml = restaurant.website
-    ? `<p><strong>Website:</strong> <a href="${restaurant.website}" target="_blank" rel="noreferrer">${restaurant.website}</a></p>`
-    : '';
-  const hoursHtml = restaurant.openingHours ? `<p><strong>Hours:</strong> ${restaurant.openingHours}</p>` : '';
-
-  els.detailsPanel.innerHTML = `
-    <div style="position: relative;">
-      <h2>${restaurant.name}</h2>
-      <button class="fav-btn large ${isFavorite(restaurant.id) ? 'active' : ''}" data-id="${restaurant.id}">🔖</button>
-    </div>
-    <p class="muted">${restaurant.address}</p>
-    <p>${restaurant.description || 'No description provided yet.'}</p>
-
-    <div class="metrics">
-      ${
-        restaurant.dietaryTags && restaurant.dietaryTags.length
-          ? restaurant.dietaryTags.map((tag) => `<span class="metric-pill">${tag}</span>`).join('')
-          : ''
-      }
-      <span class="metric-pill">Combined: ${ratingText(
-        restaurant.combinedRating,
-        restaurant.combinedRatingCount
-      )}</span>
-      <span class="metric-pill">Google: ${ratingText(
-        restaurant.googleRating,
-        restaurant.googleRatingCount
-      )}</span>
-      <span class="metric-pill">App: ${ratingText(restaurant.appRating, restaurant.appRatingCount)}</span>
-    </div>
-
-    <h3>Information</h3>
-    <div>
-      <p><strong>Address:</strong> ${restaurant.address}</p>
-      ${phoneHtml}
-      ${websiteHtml}
-      ${hoursHtml}
-    </div>
-
-    <h3>Gallery</h3>
-    <div class="detail-gallery">
-      ${
-        images.length
-          ? images.map((img) => `<img src="${img.url}" alt="${restaurant.name}" loading="lazy" />`).join('')
-          : '<p class="muted">No photos yet.</p>'
-      }
-    </div>
-
-    <h3>Menu</h3>
-    <div>
-      ${
-        menuItems.length
-          ? menuItems
-              .map(
-                (item) => `
-                  <div class="menu-item">
-                    <strong>${item.name}</strong> - $${Number(item.price).toFixed(2)}
-                    <p class="muted">${item.description || ''}</p>
-                  </div>
-                `
-              )
-              .join('')
-          : restaurant.menuUrl
-            ? `<p><a href="${restaurant.menuUrl}" target="_blank" rel="noreferrer">View restaurant menu</a></p>`
-            : '<p class="muted">No menu items yet.</p>'
-      }
-    </div>
-
-    ${renderReviewForm(detail, reviews)}
-
-    <h3>Reviews</h3>
-    <div>
-      ${
-        reviews.length
-          ? reviews
-              .map(
-                (review) => `
-              <article class="review-item">
-                <strong>${review.userName}</strong>
-                <p class="review-stars">${renderStars(review.rating)}</p>
-                <p>${review.comment || ''}</p>
-                <p class="muted">${formatDate(review.createdAt)}</p>
-                ${renderModeratorReviewActions(restaurantId, review)}
-              </article>
-            `
-              )
-              .join('')
-          : '<p class="muted">No reviews yet.</p>'
-      }
-    </div>
-  `;
-  const detailsFavBtn = els.detailsPanel.querySelector('.fav-btn.large');
-    if (detailsFavBtn) {
-      detailsFavBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-
-        if (!state.user) {
-          showToast('Sign in to save this restaurant as a favorite.', true);
-          return;
-        }
-
-        toggleFavorite(restaurant.id);
-        detailsFavBtn.classList.toggle('active', isFavorite(restaurant.id));
-        renderRestaurantList();
-      });
-    }
-
-
-  setupStarRating();
-
-  const reviewForm = document.getElementById('review-form');
-  if (reviewForm) {
-    reviewForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-
-      const formData = new FormData(reviewForm);
-
-      const rating = Number(formData.get('rating'));
-      const starRating = reviewForm.querySelector('.star-rating');
-
-      // remove previous error state
-      starRating?.classList.remove('error');
-
-      // ❗ validation
-      if (!rating || rating < 1 || rating > 5) {
-        starRating?.classList.add('error');
-        return;
-      }
-
-      try {
-        await api(`/api/restaurants/${restaurantId}/reviews`, {
-          method: 'POST',
-          body: {
-            rating: rating,
-            comment: String(formData.get('comment') || '').trim(),
-          },
-        });
-
-        showToast('Review saved');
-        await Promise.all([
-          loadRestaurantDetails(restaurantId),
-          refreshRestaurantInFeed(restaurantId),
-        ]);
-      } catch (err) {
-        showToast(err.message, true);
-      }
-    });
-  }
-
-  const deleteBtn = document.getElementById('delete-review');
-  if (deleteBtn) {
-    deleteBtn.addEventListener('click', async () => {
-      const myReview = detail.myReview;
-      if (!myReview) return;
-
-      try {
-        await api(`/api/restaurants/${restaurantId}/reviews/${myReview.id}`, {
-          method: 'DELETE',
-        });
-        showToast('Review deleted');
-        await Promise.all([loadRestaurantDetails(restaurantId), refreshRestaurantInFeed(restaurantId)]);
-      } catch (err) {
-        showToast(err.message, true);
-      }
-    });
-  }
-
-  els.detailsPanel.querySelectorAll('.moderator-delete-review').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const reviewId = Number(button.dataset.reviewId);
-      const reviewRestaurantId = Number(button.dataset.restaurantId);
-
-      if (!Number.isFinite(reviewId) || !Number.isFinite(reviewRestaurantId)) {
-        return;
-      }
-
-      try {
-        await api(`/api/restaurants/${reviewRestaurantId}/reviews/${reviewId}`, {
-          method: 'DELETE',
-        });
-        showToast('Review removed');
-        await Promise.all([
-          loadRestaurantDetails(reviewRestaurantId),
-          refreshRestaurantInFeed(reviewRestaurantId),
-        ]);
-      } catch (err) {
-        showToast(err.message, true);
-      }
-    });
-  });
-}
-
-async function refreshRestaurantInFeed(restaurantId) {
-  if (typeof restaurantId !== 'number') {
-    return;
-  }
-
-  const detail = await api(`/api/restaurants/${restaurantId}`);
-  const restaurant = detail.restaurant;
-  const index = state.restaurants.findIndex((item) => item.id === restaurantId);
-  if (index !== -1) {
-    const current = state.restaurants[index];
-    state.restaurants[index] = {
-      ...current,
-      ...restaurant,
-      distanceKm: current.distanceKm,
-    };
-    renderRestaurantList();
-  }
-}
-
-async function loadOwnerRestaurants() {
-  const data = await api('/api/owner/restaurants');
-  state.ownerRestaurants = data.restaurants;
-
-  els.ownerRestaurantsList.innerHTML = state.ownerRestaurants.length
-    ? state.ownerRestaurants
-        .map(
-          (restaurant) => `
-          <div class="owner-row" data-restaurant-id="${restaurant.id}">
-            <strong>${restaurant.name}</strong>
-            <p class="muted">${restaurant.address}</p>
-            <p class="muted">${restaurant.imageCount} images, ${restaurant.menuItemCount} menu items</p>
-          </div>
-        `
-        )
-        .join('')
-    : '<p class="muted">No restaurants yet.</p>';
-
-  const options = state.ownerRestaurants
-    .map((restaurant) => `<option value="${restaurant.id}">${restaurant.name}</option>`)
-    .join('');
-
-  const placeholder = '<option value="">Select restaurant</option>';
-  els.editRestaurantSelect.innerHTML = placeholder + options;
-  els.imageRestaurantSelect.innerHTML = placeholder + options;
-  els.menuRestaurantSelect.innerHTML = placeholder + options;
-
-  const selectedId =
-    state.selectedOwnerRestaurantId && state.ownerRestaurants.some((item) => item.id === state.selectedOwnerRestaurantId)
-      ? state.selectedOwnerRestaurantId
-      : state.ownerRestaurants[0] && state.ownerRestaurants[0].id;
-
-  if (selectedId) {
-    populateOwnerRestaurantForm(selectedId);
-  } else if (els.editRestaurantForm) {
-    els.editRestaurantForm.reset();
-  }
-
-  els.ownerRestaurantsList.querySelectorAll('[data-restaurant-id]').forEach((row) => {
-    row.addEventListener('click', () => {
-      populateOwnerRestaurantForm(Number(row.dataset.restaurantId));
-    });
-  });
-}
-
-function toCuisineTagString(cuisineTags) {
-  return Array.isArray(cuisineTags) ? cuisineTags.join(', ') : '';
-}
-
-function populateOwnerRestaurantForm(restaurantId) {
-  const restaurant = state.ownerRestaurants.find((item) => item.id === Number(restaurantId));
-  if (!restaurant || !els.editRestaurantForm) return;
-
-  state.selectedOwnerRestaurantId = restaurant.id;
-  els.editRestaurantSelect.value = String(restaurant.id);
-  els.editRestaurantForm.elements.restaurantId.value = String(restaurant.id);
-  els.editRestaurantForm.elements.name.value = restaurant.name || '';
-  els.editRestaurantForm.elements.address.value = restaurant.address || '';
-  els.editRestaurantForm.elements.phone.value = restaurant.phone || '';
-  els.editRestaurantForm.elements.website.value = restaurant.website || '';
-  els.editRestaurantForm.elements.cuisineTags.value = toCuisineTagString(restaurant.cuisineTags);
-  els.editRestaurantForm.elements.dietaryTags.value = toCuisineTagString(restaurant.dietaryTags);
-  els.editRestaurantForm.elements.description.value = restaurant.description || '';
-  els.editRestaurantForm.elements.menuUrl.value = restaurant.menuUrl || '';
-}
-
-function applyTheme(theme) {
-  const isDark = theme === 'dark';
-  document.body.classList.toggle('dark', isDark);
-
-  if (els.themeToggleBtn) {
-    els.themeToggleBtn.textContent = isDark ? '☀️ Light Mode' : '🌙 Dark Mode';
-  }
-
-  localStorage.setItem('theme', theme);
-}
-
-function initTheme() {
-  const savedTheme = localStorage.getItem('theme');
-  if (savedTheme === 'dark' || savedTheme === 'light') {
-    applyTheme(savedTheme);
-    return;
-  }
-
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  applyTheme(prefersDark ? 'dark' : 'light');
-}
-
-function bindEvents() {
-  els.openAuthBtn.addEventListener('click', () => {
-    navigateToAuthPage();
-  });
-
-  els.openLocationModalBtn.addEventListener('click', () => {
-    openLocationModal();
-  });
-
-  els.closeLocationModalBtn.addEventListener('click', () => {
-    closeLocationModal();
-  });
-
-  els.locationModal.addEventListener('click', (event) => {
-    if (event.target === els.locationModal) {
-      closeLocationModal();
-    }
-  });
-
-  els.useBrowserLocationBtn.addEventListener('click', async () => {
-    await useBrowserLocationInModal();
-  });
-
-  els.modalSearchLocationBtn.addEventListener('click', async () => {
-    await searchLocationInModal();
-  });
-
-  els.modalLocationQuery.addEventListener('keydown', async (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      await searchLocationInModal();
-    }
-  });
-
-  els.confirmLocationBtn.addEventListener('click', async () => {
-    await confirmSelectedLocation();
-  });
-
-  if (els.dietaryFilterInputs.length) {
-    els.dietaryFilterInputs.forEach((input) => {
-      input.addEventListener('change', () => {
-        state.dietaryFilters = els.dietaryFilterInputs
-          .filter((item) => item.checked)
-          .map((item) => item.value);
-
-        renderRestaurantList();
-      });
-    });
-  }
-
-  if (els.favoritesFilterInput) {
-    els.favoritesFilterInput.addEventListener('change', () => {
-      if (els.favoritesFilterInput.checked && !state.user) {
-        els.favoritesFilterInput.checked = false;
-        showToast('Sign in to view your favorite restaurants.', true);
-        return;
-      }
-
-      state.favoritesOnly = els.favoritesFilterInput.checked;
-      renderRestaurantList();
-    });
-  }
-
-  if (els.clearFiltersBtn) {
-    els.clearFiltersBtn.addEventListener('click', () => {
-      els.dietaryFilterInputs.forEach((input) => {
-        input.checked = false;
-      });
-
-      if (els.favoritesFilterInput) {
-        els.favoritesFilterInput.checked = false;
-      }
-
-      state.dietaryFilters = [];
-      state.favoritesOnly = false;
-      renderRestaurantList();
-    });
-  }
-
-  els.themeToggleBtn.addEventListener('click', () => {
-    const isDark = document.body.classList.contains('dark');
-    applyTheme(isDark ? 'light' : 'dark');
-  });
-
-  els.logoutBtn.addEventListener('click', async () => {
-    try {
-      await api('/api/auth/logout', { method: 'POST', body: {} });
-    } catch (_err) {
-      // Ignore logout errors for stateless token flow.
-    }
-
-    clearAuth();
-    renderAuthUI();
-    showToast('Logged out');
-
-    if (state.selectedRestaurantId) {
-      loadRestaurantDetails(state.selectedRestaurantId).catch((err) => showToast(err.message, true));
-    }
-  });
-  els.createRestaurantForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-
-    if (!state.user || state.user.role !== 'owner') {
-      showToast('Owner login required', true);
-      return;
-    }
-
-    const formData = new FormData(els.createRestaurantForm);
-    const address = String(formData.get('address') || '').trim();
-
-    try {
-      const geo = await geocodeQuery(address);
-
-      await api('/api/owner/restaurants', {
-        method: 'POST',
-        body: {
-          name: String(formData.get('name') || '').trim(),
-          address: geo.label || address,
-          lat: Number(geo.lat),
-          lng: Number(geo.lng),
-          phone: String(formData.get('phone') || '').trim(),
-          website: String(formData.get('website') || '').trim(),
-          description: String(formData.get('description') || '').trim(),
-          cuisineTags: String(formData.get('cuisineTags') || '').trim(),
-          dietaryTags: String(formData.get('dietaryTags') || '').trim(),
-          menuUrl: String(formData.get('menuUrl') || '').trim(),
-        },
-      });
-
-      els.createRestaurantForm.reset();
-      await loadOwnerRestaurants();
-      showToast('Restaurant created');
-
-      if (state.location) {
-        await resetAndReloadRestaurants();
-      }
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-
-  els.uploadImagesForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-
-    if (!state.user || state.user.role !== 'owner') {
-      showToast('Owner login required', true);
-      return;
-    }
-
-    const formData = new FormData(els.uploadImagesForm);
-    const restaurantId = String(formData.get('restaurantId') || '');
-    if (!restaurantId) {
-      showToast('Choose a restaurant', true);
-      return;
-    }
-
-    try {
-      const payload = new FormData();
-      const files = els.uploadImagesForm.querySelector('input[name="images"]').files;
-      for (const file of files) {
-        payload.append('images', file);
-      }
-
-      await api(`/api/owner/restaurants/${restaurantId}/images`, {
-        method: 'POST',
-        body: payload,
-      });
-
-      els.uploadImagesForm.reset();
-      showToast('Images uploaded');
-      await loadOwnerRestaurants();
-
-      if (state.selectedRestaurantId === Number(restaurantId)) {
-        await loadRestaurantDetails(Number(restaurantId));
-        await refreshRestaurantInFeed(Number(restaurantId));
-      }
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-
-  els.menuItemForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-
-    if (!state.user || state.user.role !== 'owner') {
-      showToast('Owner login required', true);
-      return;
-    }
-
-    const formData = new FormData(els.menuItemForm);
-    const restaurantId = String(formData.get('restaurantId') || '');
-    if (!restaurantId) {
-      showToast('Choose a restaurant', true);
-      return;
-    }
-
-    try {
-      const payload = new FormData();
-      payload.append('name', String(formData.get('name') || '').trim());
-      payload.append('description', String(formData.get('description') || '').trim());
-      payload.append('price', String(formData.get('price') || '0'));
-
-      const fileInput = els.menuItemForm.querySelector('input[name="image"]');
-      if (fileInput.files[0]) {
-        payload.append('image', fileInput.files[0]);
-      }
-
-      await api(`/api/owner/restaurants/${restaurantId}/menu-items`, {
-        method: 'POST',
-        body: payload,
-      });
-
-      els.menuItemForm.reset();
-      showToast('Menu item added');
-      await loadOwnerRestaurants();
-
-      if (state.selectedRestaurantId === Number(restaurantId)) {
-        await loadRestaurantDetails(Number(restaurantId));
-      }
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-
-  if (els.editRestaurantSelect) {
-    els.editRestaurantSelect.addEventListener('change', (event) => {
-      const restaurantId = Number(event.target.value);
-      if (restaurantId) {
-        populateOwnerRestaurantForm(restaurantId);
-      }
-    });
-  }
-
-  if (els.editRestaurantForm) {
-    els.editRestaurantForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-
-      if (!state.user || state.user.role !== 'owner') {
-        showToast('Owner login required', true);
-        return;
-      }
-
-      const formData = new FormData(els.editRestaurantForm);
-      const restaurantId = Number(formData.get('restaurantId'));
-      if (!restaurantId) {
-        showToast('Choose a restaurant', true);
-        return;
-      }
-
-      try {
-        const address = String(formData.get('address') || '').trim();
-        const geo = await geocodeQuery(address);
-
-        await api(`/api/owner/restaurants/${restaurantId}`, {
-          method: 'PUT',
-          body: {
-            name: String(formData.get('name') || '').trim(),
-            address: geo.label || address,
-            lat: Number(geo.lat),
-            lng: Number(geo.lng),
-            phone: String(formData.get('phone') || '').trim(),
-            website: String(formData.get('website') || '').trim(),
-            description: String(formData.get('description') || '').trim(),
-            cuisineTags: String(formData.get('cuisineTags') || '').trim(),
-            dietaryTags: String(formData.get('dietaryTags') || '').trim(),
-            menuUrl: String(formData.get('menuUrl') || '').trim(),
-          },
-        });
-
-        await loadOwnerRestaurants();
-
-        if (state.location) {
-          await resetAndReloadRestaurants();
-        }
-
-        if (state.selectedRestaurantId === restaurantId) {
-          await loadRestaurantDetails(restaurantId);
-        }
-
-        showToast('Restaurant updated');
-      } catch (err) {
-        showToast(err.message, true);
-      }
-    });
   }
 }
 
@@ -1436,47 +625,100 @@ async function resetAndReloadRestaurants() {
   state.restaurants = [];
   state.cursor = null;
   state.hasMore = true;
+  state.totalRestaurants = 0;
   state.selectedRestaurantId = null;
-  els.detailsPanel.innerHTML =
-    '<h2>Restaurant Details</h2><p class="muted">Select a restaurant to view menu, photos, and reviews.</p>';
+  persistDiscoveryState();
+  renderDetailsPlaceholder();
   renderRestaurantList();
+  renderFeedLoader();
   await loadMoreRestaurants();
 }
 
-function setupStarRating() {
-  const ratingInput = document.getElementById('review-rating');
-  const starButtons = document.querySelectorAll('.star-btn');
-  const starContainer = document.querySelector('.star-rating');
+function applyTheme(theme) {
+  const isDark = theme === "dark";
+  document.body.classList.toggle("dark", isDark);
+  els.themeToggleBtn.textContent = isDark ? "☀️ Light Mode" : "🌙 Dark Mode";
+  localStorage.setItem("theme", theme);
+}
 
-  if (!ratingInput || !starButtons.length || !starContainer) return;
-
-  function paintStars(value) {
-    starButtons.forEach((btn) => {
-      const starValue = Number(btn.dataset.value);
-      btn.classList.toggle('active', starValue <= value);
-    });
+function initTheme() {
+  const savedTheme = localStorage.getItem("theme");
+  if (savedTheme === "dark" || savedTheme === "light") {
+    applyTheme(savedTheme);
+    return;
   }
 
-  const savedRating = Number(ratingInput.value || 0);
-  paintStars(savedRating);
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  applyTheme(prefersDark ? "dark" : "light");
+}
 
-  starButtons.forEach((btn) => {
-    btn.addEventListener('mouseenter', () => {
-      const hoverValue = Number(btn.dataset.value);
-      paintStars(hoverValue);
-    });
+function bindEvents() {
+  els.openAuthBtn.addEventListener("click", () => {
+    showToast(
+      `Auth is the next migration step. Discovery currently runs through ${getRestaurantDataModeLabel()}.`,
+    );
+  });
 
-    btn.addEventListener('click', () => {
-      const selectedValue = Number(btn.dataset.value);
-      ratingInput.value = selectedValue;
-      paintStars(selectedValue);
-      starContainer.classList.remove('error');
+  els.openLocationModalBtn.addEventListener("click", openLocationModal);
+  els.closeLocationModalBtn.addEventListener("click", closeLocationModal);
+  els.locationModal.addEventListener("click", (event) => {
+    if (event.target === els.locationModal) {
+      closeLocationModal();
+    }
+  });
+  els.useBrowserLocationBtn.addEventListener("click", () => {
+    useBrowserLocationInModal().catch((err) => showToast(err.message, true));
+  });
+  els.modalSearchLocationBtn.addEventListener("click", () => {
+    searchLocationInModal().catch((err) => showToast(err.message, true));
+  });
+  els.modalLocationQuery.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      searchLocationInModal().catch((err) => showToast(err.message, true));
+    }
+  });
+  els.confirmLocationBtn.addEventListener("click", () => {
+    confirmSelectedLocation().catch((err) => showToast(err.message, true));
+  });
+
+  els.dietaryFilterInputs.forEach((input) => {
+    input.checked = state.dietaryFilters.includes(normalizeDietaryTag(input.value));
+    input.addEventListener("change", () => {
+      state.dietaryFilters = els.dietaryFilterInputs
+        .filter((item) => item.checked)
+        .map((item) => normalizeDietaryTag(item.value));
+
+      resetAndReloadRestaurants().catch((err) => showToast(err.message, true));
     });
   });
 
-  starContainer.addEventListener('mouseleave', () => {
-    const savedValue = Number(ratingInput.value || 0);
-    paintStars(savedValue);
+  if (els.favoritesFilterInput) {
+    els.favoritesFilterInput.checked = state.favoritesOnly;
+    els.favoritesFilterInput.addEventListener("change", () => {
+      state.favoritesOnly = els.favoritesFilterInput.checked;
+      persistDiscoveryState();
+      renderRestaurantList();
+    });
+  }
+
+  els.clearFiltersBtn.addEventListener("click", () => {
+    els.dietaryFilterInputs.forEach((input) => {
+      input.checked = false;
+    });
+
+    if (els.favoritesFilterInput) {
+      els.favoritesFilterInput.checked = false;
+    }
+
+    state.dietaryFilters = [];
+    state.favoritesOnly = false;
+    resetAndReloadRestaurants().catch((err) => showToast(err.message, true));
+  });
+
+  els.themeToggleBtn.addEventListener("click", () => {
+    const isDark = document.body.classList.contains("dark");
+    applyTheme(isDark ? "light" : "dark");
   });
 }
 
@@ -1486,18 +728,19 @@ async function init() {
   bindEvents();
   setupInfiniteScroll();
   updateSelectedLocationText();
+  renderDetailsPlaceholder();
   renderRestaurantList();
   renderFeedLoader();
-  // bindEvents();
-  // setupInfiniteScroll();
 
-  state.location = { lat: 37.7937, lng: -122.395 };
-  state.locationLabel = 'San Francisco (default)';
-  els.locationStatus.textContent = 'Using default location (San Francisco). You can change this anytime.';
+  els.locationStatus.textContent = `Showing restaurants near ${state.locationLabel}`;
 
   try {
     await resetAndReloadRestaurants();
+    if (getRestaurantDataMode() === "local") {
+      showToast("Running in local demo mode. UI work can continue without Convex.");
+    }
   } catch (err) {
+    renderDetailsPlaceholder();
     showToast(err.message, true);
   }
 }

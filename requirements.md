@@ -1,5 +1,7 @@
 # Restaurant Discovery + Reviews Prototype (MVP) Requirements
 
+> Legacy product/spec document from the pre-Convex backend phase. It is kept for historical context and does not describe the current runtime architecture.
+
 ## 1) Objective
 Build a working web app prototype where:
 - Users can enter/share a location and browse nearby restaurants.
