@@ -12,3 +12,4 @@ coverage/
 .convex/
 convex/_generated/
 public/runtime-config.js
+dist/

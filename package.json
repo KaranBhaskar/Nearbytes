@@ -8,6 +8,7 @@
     "node": "^20 || ^22"
   },
   "scripts": {
+    "build": "node scripts/build-static.js",
     "dev": "node scripts/dev.js",
     "dev:static": "node scripts/dev-static.js",
     "convex:dev": "npx convex dev --typecheck disable",

@@ -269,6 +269,12 @@ p { margin: 0 0 8px 0; }
   border-bottom: 1px solid var(--border);
 }
 
+.section-title-row.compact {
+  margin-bottom: 8px;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
 /* ── RESTAURANT LIST ─────────────────────────────────────── */
 .restaurant-list {
   display: grid;
@@ -376,6 +382,10 @@ p { margin: 0 0 8px 0; }
   padding: 12px 0;
 }
 
+.review-list {
+  display: grid;
+}
+
 .menu-item {
   display: flex;
   justify-content: space-between;
@@ -416,11 +426,34 @@ p { margin: 0 0 8px 0; }
   cursor: pointer;
   transition: border-color 0.18s ease, background 0.18s ease;
   font-weight: 500;
+  text-align: left;
+  display: grid;
+  gap: 4px;
 }
 
 .owner-row:hover {
   border-color: var(--primary);
   background: var(--accent-soft);
+}
+
+.owner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.moderator-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.moderator-row:first-child {
+  border-top: none;
+  padding-top: 0;
 }
 
 /* ── FORM ELEMENTS ───────────────────────────────────────── */
@@ -613,6 +646,10 @@ textarea {
 .auth-helper {
   margin: 0;
   font-size: 12px;
+}
+
+#auth-status {
+  margin-top: 14px;
 }
 
 /* ── LIST LOADER ─────────────────────────────────────────── */
