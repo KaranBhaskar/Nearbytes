@@ -125,6 +125,10 @@ CLIENT_ORIGIN=https://your-app.vercel.app
 GOOGLE_MAPS_BROWSER_KEY=your_browser_restricted_google_maps_key
 ```
 
+You can also copy the frontend-only variables from:
+
+- `frontend/vercel.env.example`
+
 Recommended browser-key restrictions:
 
 - `http://localhost:3000/*`
