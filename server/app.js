@@ -7,6 +7,7 @@ const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const { getDb } = require("./db");
 const { syncGoogleNearby } = require("./googlePlaces");
+const { syncRestaurantMenu } = require("./menuSync");
 const {
   generateToken,
   sanitizeUser,
@@ -244,9 +245,9 @@ function normalizeExternalRestaurantElement(element, originLat, originLng) {
     inferredDietaryTags = [...new Set([...inferredDietaryTags, "halal"])];
   }
 
-    if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return null;
-    }
+  if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
 
   return {
     externalPlaceId: `osm:${element.type}:${element.id}`,
@@ -375,6 +376,7 @@ function normalizeRestaurantRow(row) {
     ownerId: row.owner_id,
     name: row.name,
     address: row.address,
+    menuUrl: row.menu_url,
     lat: row.lat,
     lng: row.lng,
     description: row.description,
@@ -432,6 +434,7 @@ function parseRestaurantPayload(body, existing = null) {
   const rawLng = body.lng;
   const rawCuisineTags = body.cuisineTags;
   const rawDietaryTags = body.dietaryTags;
+  const rawMenuUrl = body.menuUrl; 
 
   const nextName =
     rawName == null ? existing && existing.name : String(rawName).trim();
@@ -499,6 +502,12 @@ function parseRestaurantPayload(body, existing = null) {
           : String(rawWebsite).trim() || null,
       cuisineTags,
       dietaryTags,
+      menuUrl:
+        rawMenuUrl == null
+          ? existing
+            ? existing.menu_url
+            : null
+          : String(rawMenuUrl).trim() || null,
     },
   };
 }
@@ -515,6 +524,7 @@ function updateRestaurantRecord(restaurantId, values) {
       description = ?,
       phone = ?,
       website = ?,
+      menu_url = ?, 
       cuisine_tags = ?,
       dietary_tags = ?,
       updated_at = CURRENT_TIMESTAMP
@@ -528,6 +538,7 @@ function updateRestaurantRecord(restaurantId, values) {
     values.description,
     values.phone,
     values.website,
+    values.menuUrl, 
     JSON.stringify(values.cuisineTags),
     JSON.stringify(values.dietaryTags),
     restaurantId
@@ -631,6 +642,11 @@ app.get("/api/place-photo", async (req, res) => {
 app.get("/api/location/restaurants", async (req, res) => {
   const lat = Number(req.query.lat);
   const lng = Number(req.query.lng);
+
+  const dietaryFilters = String(req.query.dietary || "")
+  .split(",")
+  .map((item) => item.trim().toLowerCase())
+  .filter(Boolean);
 
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return res.status(400).json({ error: "lat and lng are required numbers" });
@@ -885,7 +901,7 @@ app.get("/api/restaurants/nearby", async (req, res) => {
   });
 });
 
-app.get("/api/restaurants/:id", optionalAuth, (req, res) => {
+app.get("/api/restaurants/:id", optionalAuth, async (req, res) => {
   const restaurantId = Number(req.params.id);
   if (!Number.isFinite(restaurantId)) {
     return res.status(400).json({ error: "invalid restaurant id" });
@@ -894,6 +910,18 @@ app.get("/api/restaurants/:id", optionalAuth, (req, res) => {
   const restaurant = getRestaurantWithAggregates(restaurantId);
   if (!restaurant) {
     return res.status(404).json({ error: "restaurant not found" });
+  }
+
+  try {
+    const existingMenuCount = db
+      .prepare("SELECT COUNT(*) AS count FROM menu_items WHERE restaurant_id = ?")
+      .get(restaurantId).count;
+
+    if (existingMenuCount === 0 && restaurant.website) {
+      await syncRestaurantMenu(db, restaurant);
+    }
+  } catch (err) {
+    console.warn("Menu sync failed:", err.message);
   }
 
   const images = db
@@ -1144,9 +1172,10 @@ app.post(
       .prepare(
         `
       INSERT INTO restaurants(
-        owner_id, name, address, lat, lng, description, phone, website, cuisine_tags, dietary_tags,
+        owner_id, name, address, lat, lng, description, phone, website,
+        cuisine_tags, dietary_tags, menu_url,
         google_place_id, google_rating, google_rating_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      )
     `
       )
       .run(
@@ -1160,6 +1189,7 @@ app.post(
         values.website,
         JSON.stringify(values.cuisineTags),
         JSON.stringify(values.dietaryTags),
+        req.body.menuUrl || null, 
         null,
         null,
         0

@@ -153,6 +153,32 @@ function findBestOsmMatch(place, osmItems) {
   return best;
 }
 
+async function fetchGooglePlaceDetails(placeId) {
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+  if (!apiKey || !placeId) return null;
+
+  const url = new URL(
+    "https://places.googleapis.com/v1/places/" + encodeURIComponent(placeId)
+  );
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": "websiteUri,regularOpeningHours",
+    },
+  });
+
+  if (!response.ok) return null;
+
+  const payload = await response.json();
+
+  return {
+    website: payload.websiteUri || null,
+    openingHours:
+      payload.regularOpeningHours?.weekdayDescriptions?.join(" | ") || null,
+  };
+}
+
 async function syncGoogleNearby(db, lat, lng) {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) {
@@ -185,6 +211,40 @@ async function syncGoogleNearby(db, lat, lng) {
 
   const osmItems = await fetchOsmDietaryData(lat, lng);
 
+  const enrichedResults = [];
+  for (const place of payload.results) {
+    const placeId = place.place_id;
+    const location = place.geometry?.location;
+
+    if (!placeId || !location) continue;
+
+    const osmMatch = findBestOsmMatch(place, osmItems);
+    let dietaryTags = osmMatch ? osmMatch.dietaryTags : [];
+
+    const lowerName = String(place.name || "").toLowerCase();
+
+    if (lowerName.includes("subway")) {
+      dietaryTags = [...new Set([...dietaryTags, "vegetarian"])];
+    }
+
+    if (lowerName.includes("osmow") || lowerName.includes("shawarma")) {
+      dietaryTags = [...new Set([...dietaryTags, "halal"])];
+    }
+
+    let details = null;
+    try {
+      details = await fetchGooglePlaceDetails(placeId);
+    } catch (err) {
+      console.warn("Place details fetch failed:", err.message);
+    }
+
+    enrichedResults.push({
+      place,
+      dietaryTags,
+      website: details?.website || null,
+    });
+  }
+
   const upsert = db.prepare(`
     INSERT INTO restaurants (
       owner_id,
@@ -208,6 +268,7 @@ async function syncGoogleNearby(db, lat, lng) {
       address = excluded.address,
       lat = excluded.lat,
       lng = excluded.lng,
+      website = COALESCE(excluded.website, restaurants.website),
       google_rating = excluded.google_rating,
       google_rating_count = excluded.google_rating_count,
       google_photo_ref = COALESCE(excluded.google_photo_ref, restaurants.google_photo_ref),
@@ -219,27 +280,12 @@ async function syncGoogleNearby(db, lat, lng) {
       updated_at = CURRENT_TIMESTAMP
   `);
 
-  const transaction = db.transaction((results) => {
+  const transaction = db.transaction((rows) => {
     let syncedCount = 0;
 
-    for (const place of results) {
-      const placeId = place.place_id;
+    for (const row of rows) {
+      const place = row.place;
       const location = place.geometry?.location;
-
-      if (!placeId || !location) continue;
-
-      const osmMatch = findBestOsmMatch(place, osmItems);
-      let dietaryTags = osmMatch ? osmMatch.dietaryTags : [];
-
-      const lowerName = String(place.name || "").toLowerCase();
-
-      if (lowerName.includes("subway")) {
-        dietaryTags = [...new Set([...dietaryTags, "vegetarian"])];
-      }
-
-      if (lowerName.includes("osmow") || lowerName.includes("shawarma")) {
-        dietaryTags = [...new Set([...dietaryTags, "halal"])];
-      }
 
       upsert.run(
         null,
@@ -249,10 +295,10 @@ async function syncGoogleNearby(db, lat, lng) {
         Number(location.lng),
         null,
         null,
-        null,
+        row.website,
         JSON.stringify([]),
-        JSON.stringify(dietaryTags),
-        placeId,
+        JSON.stringify(row.dietaryTags || []),
+        place.place_id,
         place.rating ?? null,
         place.user_ratings_total ?? 0,
         place.photos?.[0]?.photo_reference ?? null
@@ -264,7 +310,7 @@ async function syncGoogleNearby(db, lat, lng) {
     return syncedCount;
   });
 
-  const synced = transaction(payload.results);
+  const synced = transaction(enrichedResults);
   console.log(`Google nearby sync inserted/updated ${synced} restaurants`);
   return { synced, reason: "ok" };
 }
