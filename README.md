@@ -10,12 +10,14 @@ A working prototype web app for discovering nearby restaurants, viewing combined
 - Add Restaurants (Owner feature)
 - Add Menu Items (Owner feature)
 - Edit existing restaurant Information (Owner feature)
-- Use My Location feature Improved
-- Location Selection Improved
+- Use My Location feature (User feature)
+- Location Selection feature (User feature)
 - New filter system that filters by dietary restrictions
 - User reviews feature
 - Edit Restaurant Information (Owner feature)
 - View Restaurant Details (Menu, Ratings, Reviews)
+- Moderated Reviews (Moderator Feature)
+- Location-based suggestions (User feature)
 
 ## Local Run
 
@@ -147,3 +149,11 @@ Without this key, the app still works with local seeded + owner-created restaura
 - Images upload to local `/uploads`.
 - Nearby pagination uses cursor-based offset encoding.
 - Combined rating formula is weighted by rating counts.
+
+## Collaborators
+
+- Talha Hassan
+- Karan Bhaskar
+- Rayan Khan
+- Mohammad Jafari
+- Dev Shah
