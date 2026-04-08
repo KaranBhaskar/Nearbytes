@@ -1175,7 +1175,7 @@ app.post(
         owner_id, name, address, lat, lng, description, phone, website,
         cuisine_tags, dietary_tags, menu_url,
         google_place_id, google_rating, google_rating_count
-      )
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
       )
       .run(
@@ -1189,7 +1189,7 @@ app.post(
         values.website,
         JSON.stringify(values.cuisineTags),
         JSON.stringify(values.dietaryTags),
-        req.body.menuUrl || null, 
+        values.menuUrl,
         null,
         null,
         0
