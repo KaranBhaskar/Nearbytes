@@ -68,6 +68,56 @@
         </div>
       </div>
 
+      <div id="auth-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+          <div class="modal-header">
+            <div>
+              <h2>Sign up or log in</h2>
+              <p class="muted">Customers save favorites and reviews. Owners manage listings. Moderators remove reviews, restaurants, and users.</p>
+            </div>
+            <button id="close-auth-modal" class="btn btn-outline" type="button">Close</button>
+          </div>
+
+          <div class="auth-panels">
+            <form id="login-form" class="subcard auth-form">
+              <h3>Log In</h3>
+              <input name="email" type="email" placeholder="Email" autocomplete="email" required />
+              <input
+                name="password"
+                type="password"
+                placeholder="Password"
+                autocomplete="current-password"
+                required
+              />
+              <button type="submit" class="btn btn-primary">Log In</button>
+            </form>
+
+            <form id="signup-form" class="subcard auth-form">
+              <h3>Create Account</h3>
+              <input name="displayName" type="text" placeholder="Display name" autocomplete="name" required />
+              <input name="email" type="email" placeholder="Email" autocomplete="email" required />
+              <input
+                name="password"
+                type="password"
+                placeholder="Password (8+ characters)"
+                autocomplete="new-password"
+                required
+              />
+              <select name="role" required>
+                <option value="customer">Customer</option>
+                <option value="owner">Restaurant Owner</option>
+                <option value="moderator">Moderator</option>
+              </select>
+              <button type="submit" class="btn btn-primary">Create Account</button>
+            </form>
+          </div>
+
+          <p id="auth-status" class="muted auth-helper">
+            This project currently uses Convex-backed email and password auth while the UI stays on the main discovery page.
+          </p>
+        </div>
+      </div>
+
 
 
       <section class="location-bar card">
@@ -156,17 +206,21 @@
 
       <section id="owner-panel" class="owner card hidden">
         <div class="section-title-row">
-          <h2>Owner Dashboard</h2>
-          <p class="muted">Create listings, upload photos, and add menu items.</p>
+          <div>
+            <h2 id="owner-panel-title">Owner Dashboard</h2>
+            <p id="owner-panel-copy" class="muted">Create listings, update menus, and delete restaurants you own.</p>
+          </div>
         </div>
 
         <div class="owner-grid">
           <form id="create-restaurant-form" class="subcard">
             <h3>Create Restaurant</h3>
+            <p class="muted">Uses the currently selected map area until Google Places sync is added.</p>
             <input name="name" placeholder="Restaurant name" required />
             <input name="address" placeholder="City or full address" required />
             <input name="phone" placeholder="Phone" />
             <input name="website" placeholder="Website" />
+            <input name="openingHours" placeholder="Opening hours" />
             <input name="menuUrl" placeholder="Menu URL" />
             <input name="cuisineTags" placeholder="Cuisine tags (comma separated)" />
             <input name="dietaryTags" placeholder="Dietary tags (vegan, halal, gluten-free)" />
@@ -186,29 +240,39 @@
             <input name="address" placeholder="City or full address" required />
             <input name="phone" placeholder="Phone" />
             <input name="website" placeholder="Website" />
+            <input name="openingHours" placeholder="Opening hours" />
             <input name="menuUrl" placeholder="Menu URL" />
             <input name="cuisineTags" placeholder="Cuisine tags (comma separated)" />
             <input name="dietaryTags" placeholder="Dietary tags (vegan, halal, gluten-free)" />
             <textarea name="description" placeholder="Description"></textarea>
-            <button type="submit" class="btn btn-primary">Update Restaurant</button>
+            <div class="owner-actions">
+              <button type="submit" class="btn btn-primary">Update Restaurant</button>
+              <button id="delete-restaurant-btn" type="button" class="btn btn-outline">Delete Restaurant</button>
+            </div>
           </form>
 
-          <form id="upload-images-form" class="subcard" enctype="multipart/form-data">
-            <h3>Upload Restaurant Images</h3>
+          <form id="upload-images-form" class="subcard">
+            <h3>Add Restaurant Photo</h3>
             <select id="image-restaurant-select" name="restaurantId" required></select>
-            <input type="file" name="images" multiple accept="image/*" required />
-            <button type="submit" class="btn btn-primary">Upload Images</button>
+            <input name="imageUrl" type="url" placeholder="https://example.com/photo.jpg" required />
+            <button type="submit" class="btn btn-primary">Add Photo</button>
           </form>
 
-          <form id="menu-item-form" class="subcard" enctype="multipart/form-data">
+          <form id="menu-item-form" class="subcard">
             <h3>Add Menu Item</h3>
             <select id="menu-restaurant-select" name="restaurantId" required></select>
             <input name="name" placeholder="Item name" required />
             <textarea name="description" placeholder="Description"></textarea>
             <input name="price" type="number" min="0" step="0.01" placeholder="Price" required />
-            <input type="file" name="image" accept="image/*" />
+            <input name="imageUrl" type="url" placeholder="Optional image URL" />
             <button type="submit" class="btn btn-primary">Add Menu Item</button>
           </form>
+
+          <div id="moderator-users-card" class="subcard hidden">
+            <h3>Moderator Tools</h3>
+            <p class="muted">Delete accounts that should no longer have access.</p>
+            <div id="moderator-users-list" class="owner-restaurants-list"></div>
+          </div>
         </div>
       </section>
 

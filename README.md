@@ -54,6 +54,61 @@ npm run dev
 
 If `CONVEX_URL` is missing or Convex cannot be reached, the app will fall back to local demo restaurants so frontend work can continue safely.
 
+## Deploying
+
+### Convex backend
+
+Local development deployment:
+
+```bash
+npx convex dev
+```
+
+Production deployment from your machine:
+
+```bash
+npx convex deploy
+```
+
+This pushes the code in `convex/` to your project's production deployment. Convex keeps the backend separate from Vercel. Your frontend only needs the production `CONVEX_URL`.
+
+See the official docs:
+
+- [Convex project configuration](https://docs.convex.dev/production/project-configuration)
+- [Convex production deploys](https://docs.convex.dev/production)
+
+### Vercel frontend
+
+This repo now has a static build step:
+
+```bash
+npm run build
+```
+
+That creates `dist/` and writes a deployment-ready `runtime-config.js` using your environment variables.
+
+Recommended Vercel settings:
+
+- Framework Preset: `Other`
+- Root Directory: repo root
+- Build Command: `npm run build`
+- Output Directory: `dist`
+
+Set these Vercel environment variables:
+
+```env
+CONVEX_URL=https://your-production-deployment.convex.cloud
+CLIENT_ORIGIN=https://your-app.vercel.app
+```
+
+`CLIENT_ORIGIN` is included for future HTTP/CORS checks. The current app's browser-to-Convex query/mutation path is protected by backend auth and role checks, not by CORS.
+
+Useful Vercel docs:
+
+- [Deployments](https://vercel.com/docs/platform/deployments)
+- [Project configuration](https://vercel.com/docs/projects/project-configuration)
+- [Environment variables](https://vercel.com/docs/environment-variables)
+
 ## Google Places Setup (Optional)
 
 Add this in `.env.local`:
@@ -91,3 +146,4 @@ Without this key, the app still works with local demo restaurants.
 - `.env.local` is intentionally ignored and should not be committed.
 - The old Express/SQLite backend has been removed from the active architecture.
 - The app reads from Convex when available, but falls back to local demo data if Convex is empty or unavailable.
+- Frontend/back-end coupling is intentionally narrow: the browser only depends on `CONVEX_URL` and the API adapter in `public/services/restaurant-service.js`.

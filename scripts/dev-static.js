@@ -39,6 +39,7 @@ function getRuntimeConfig() {
   return {
     convexUrl: String(env.CONVEX_URL || "").trim(),
     appMode: String(env.CONVEX_URL || "").trim() ? "convex" : "local",
+    clientOrigin: String(env.CLIENT_ORIGIN || "").trim(),
   };
 }
 
