@@ -5,7 +5,7 @@ const dotenv = require("dotenv");
 
 const PUBLIC_DIR = path.join(process.cwd(), "public");
 const PORT = Number(process.env.PORT || 3000);
-const HOST = process.env.HOST || "0.0.0.0";
+const HOST = process.env.HOST || "127.0.0.1";
 
 const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
@@ -35,11 +35,14 @@ function getRuntimeConfig() {
     ...readEnvFile(".env"),
     ...readEnvFile(".env.local"),
   };
+  const googleMapsBrowserKey = String(env.GOOGLE_MAPS_BROWSER_KEY || "").trim();
 
   return {
     convexUrl: String(env.CONVEX_URL || "").trim(),
-    appMode: String(env.CONVEX_URL || "").trim() ? "convex" : "local",
+    appMode: String(env.CONVEX_URL || "").trim() ? "convex" : "unconfigured",
     clientOrigin: String(env.CLIENT_ORIGIN || "").trim(),
+    nearbyRadiusMeters: Number(env.GOOGLE_NEARBY_RADIUS_METERS || 5000),
+    googleMapsBrowserKey,
   };
 }
 
@@ -108,8 +111,9 @@ function createServer() {
 function startStaticServer() {
   const server = createServer();
   server.listen(PORT, HOST, () => {
+    const displayHost = HOST === "127.0.0.1" ? "localhost" : HOST;
     // eslint-disable-next-line no-console
-    console.log(`Static app running on http://${HOST}:${PORT}`);
+    console.log(`Static app running on http://${displayHost}:${PORT}`);
   });
   return server;
 }

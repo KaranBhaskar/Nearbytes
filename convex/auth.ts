@@ -47,6 +47,9 @@ export const signUp = mutationGeneric({
       emailLower,
       displayName: normalizeDisplayName(args.displayName, args.email),
       role: normalizeRole(args.role),
+      isBanned: false,
+      bannedAt: null,
+      bannedReason: null,
       passwordHash,
       passwordSalt,
       createdAt: nowIso(),
@@ -77,6 +80,10 @@ export const signIn = mutationGeneric({
 
     if (!user) {
       throw new Error("No account matches that email and password.");
+    }
+
+    if (user.isBanned) {
+      throw new Error(user.bannedReason || "This account has been suspended.");
     }
 
     const attemptedHash = await hashPassword(String(args.password || ""), user.passwordSalt);
@@ -146,6 +153,10 @@ export const deleteUser = mutationGeneric({
       throw new Error("User not found.");
     }
 
+    if (user.role === "moderator") {
+      throw new Error("Moderators cannot delete other moderator accounts here.");
+    }
+
     const [sessions, favorites, reviews, ownedRestaurants] = await Promise.all([
       ctx.db
         .query("sessions")
@@ -186,6 +197,51 @@ export const deleteUser = mutationGeneric({
     return {
       deletedUserId: args.userId,
       deletedOwnedRestaurantCount: ownedRestaurants.length,
+    };
+  },
+});
+
+export const setUserBan = mutationGeneric({
+  args: {
+    sessionToken: v.string(),
+    userId: v.id("users"),
+    isBanned: v.boolean(),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const moderator = await requireRole(ctx, args.sessionToken, ["moderator"]);
+
+    if (String(moderator.user._id) === String(args.userId)) {
+      throw new Error("Moderators cannot change their own suspension state here.");
+    }
+
+    const user = await ctx.db.get(args.userId);
+    if (!user) {
+      throw new Error("User not found.");
+    }
+
+    if (user.role === "moderator") {
+      throw new Error("Moderators cannot suspend other moderator accounts here.");
+    }
+
+    await ctx.db.patch(args.userId, {
+      isBanned: args.isBanned,
+      bannedAt: args.isBanned ? nowIso() : null,
+      bannedReason: args.isBanned ? (args.reason ? String(args.reason).trim().slice(0, 240) : null) : null,
+    });
+
+    const sessions = await ctx.db
+      .query("sessions")
+      .withIndex("by_user_id", (query) => query.eq("userId", args.userId))
+      .collect();
+
+    for (const session of sessions) {
+      await ctx.db.delete(session._id);
+    }
+
+    return {
+      userId: args.userId,
+      isBanned: args.isBanned,
     };
   },
 });

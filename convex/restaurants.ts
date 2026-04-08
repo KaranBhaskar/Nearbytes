@@ -11,7 +11,6 @@ import {
   requireUser,
   resolveSession,
 } from "./authHelpers";
-import { fallbackRestaurants } from "./fallbackRestaurants";
 import { buildRestaurantSummary, buildReviewStats, deleteRestaurantTree, normalizeTag } from "./restaurantHelpers";
 
 function normalizeRestaurantInput(args: Record<string, any>) {
@@ -40,6 +39,18 @@ function normalizeRestaurantInput(args: Record<string, any>) {
 }
 
 function canManageRestaurant(user: Record<string, any>, restaurant: Record<string, any>) {
+  return user.role === "moderator" || String(restaurant.ownerUserId || "") === String(user._id);
+}
+
+function canViewRestaurant(user: Record<string, any> | null | undefined, restaurant: Record<string, any>) {
+  if (!restaurant.isHidden) {
+    return true;
+  }
+
+  if (!user) {
+    return false;
+  }
+
   return user.role === "moderator" || String(restaurant.ownerUserId || "") === String(user._id);
 }
 
@@ -76,32 +87,6 @@ async function buildReviewsView(ctx: any, restaurantId: any, currentUserId?: any
   });
 }
 
-export const ensureFallbackRestaurants = mutationGeneric({
-  args: {},
-  handler: async (ctx) => {
-    let inserted = 0;
-
-    for (const restaurant of fallbackRestaurants) {
-      const existing = await ctx.db
-        .query("restaurants")
-        .withIndex("by_fallback_key", (query) =>
-          query.eq("fallbackKey", restaurant.fallbackKey),
-        )
-        .unique();
-
-      if (existing) {
-        continue;
-      }
-
-      await ctx.db.insert("restaurants", restaurant);
-      inserted += 1;
-    }
-
-    const total = (await ctx.db.query("restaurants").collect()).length;
-    return { inserted, total };
-  },
-});
-
 export const listNearby = queryGeneric({
   args: {
     lat: v.number(),
@@ -109,6 +94,7 @@ export const listNearby = queryGeneric({
     limit: v.optional(v.number()),
     cursor: v.optional(v.string()),
     dietary: v.optional(v.array(v.string())),
+    radiusMeters: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const [restaurants, allReviews] = await Promise.all([
@@ -120,12 +106,25 @@ export const listNearby = queryGeneric({
     const reviewStats = buildReviewStats(allReviews);
     const offset = Number.parseInt(String(args.cursor || "0"), 10) || 0;
     const limit = Math.max(1, Math.min(20, Number(args.limit || 20)));
+    const radiusKm = Math.max(0.1, Number(args.radiusMeters || 3000) / 1000);
 
-    const items = restaurants
+    let items = restaurants
       .map((restaurant) =>
         buildRestaurantSummary(restaurant, { lat: args.lat, lng: args.lng }, reviewStats),
       )
       .filter((restaurant) => {
+        if (restaurant.isHidden) {
+          return false;
+        }
+
+        if (restaurant.source === "fallback") {
+          return false;
+        }
+
+        if (restaurant.distanceKm > radiusKm) {
+          return false;
+        }
+
         if (!dietaryFilters.length) {
           return true;
         }
@@ -180,6 +179,9 @@ export const getRestaurantDetail = queryGeneric({
     ]);
 
     if (!restaurant) {
+      return null;
+    }
+    if (!canViewRestaurant(currentSession?.user, restaurant)) {
       return null;
     }
 
@@ -258,16 +260,29 @@ export const createRestaurant = mutationGeneric({
   handler: async (ctx, args) => {
     const { user } = await requireRole(ctx, args.sessionToken, ["owner", "moderator"]);
     const input = normalizeRestaurantInput(args);
+    const lat = Number(args.lat);
+    const lng = Number(args.lng);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      throw new Error("Choose a verified restaurant location before creating it.");
+    }
+
     const restaurantId = await ctx.db.insert("restaurants", {
       ...input,
-      lat: normalizeLatLng(args.lat, 37.7937),
-      lng: normalizeLatLng(args.lng, -122.395),
+      lat: normalizeLatLng(lat, lat),
+      lng: normalizeLatLng(lng, lng),
       source: "manual",
       syncStatus: "complete",
       lastSyncedAt: nowIso(),
       coverImage: null,
       images: [],
       menuItems: [],
+      googleMapsUri: null,
+      primaryType: null,
+      isHidden: false,
+      hiddenReason: null,
+      hiddenAt: null,
+      hiddenByUserId: undefined,
       ownerUserId: user._id,
       createdByUserId: user._id,
       googlePlaceId: null,
@@ -307,10 +322,12 @@ export const updateRestaurant = mutationGeneric({
     }
 
     const input = normalizeRestaurantInput(args);
+    const lat = Number(args.lat);
+    const lng = Number(args.lng);
     await ctx.db.patch(args.restaurantId, {
       ...input,
-      lat: normalizeLatLng(args.lat, restaurant.lat),
-      lng: normalizeLatLng(args.lng, restaurant.lng),
+      lat: Number.isFinite(lat) ? normalizeLatLng(lat, restaurant.lat) : restaurant.lat,
+      lng: Number.isFinite(lng) ? normalizeLatLng(lng, restaurant.lng) : restaurant.lng,
       lastSyncedAt: nowIso(),
     });
 
@@ -336,6 +353,34 @@ export const deleteRestaurant = mutationGeneric({
 
     await deleteRestaurantTree(ctx, args.restaurantId);
     return { deletedRestaurantId: args.restaurantId };
+  },
+});
+
+export const setRestaurantVisibility = mutationGeneric({
+  args: {
+    sessionToken: v.string(),
+    restaurantId: v.id("restaurants"),
+    isHidden: v.boolean(),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const { user } = await requireRole(ctx, args.sessionToken, ["moderator"]);
+    const restaurant = await ctx.db.get(args.restaurantId);
+    if (!restaurant) {
+      throw new Error("Restaurant not found.");
+    }
+
+    await ctx.db.patch(args.restaurantId, {
+      isHidden: args.isHidden,
+      hiddenReason: args.isHidden ? normalizeOptionalString(args.reason, 300) : null,
+      hiddenAt: args.isHidden ? nowIso() : null,
+      hiddenByUserId: args.isHidden ? user._id : undefined,
+    });
+
+    return {
+      restaurantId: args.restaurantId,
+      isHidden: args.isHidden,
+    };
   },
 });
 

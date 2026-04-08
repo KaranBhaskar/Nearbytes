@@ -7,6 +7,9 @@ export default defineSchema({
     emailLower: v.string(),
     displayName: v.string(),
     role: v.string(),
+    isBanned: v.boolean(),
+    bannedAt: v.union(v.string(), v.null()),
+    bannedReason: v.union(v.string(), v.null()),
     passwordHash: v.string(),
     passwordSalt: v.string(),
     createdAt: v.string(),
@@ -32,8 +35,10 @@ export default defineSchema({
     description: v.union(v.string(), v.null()),
     phone: v.union(v.string(), v.null()),
     website: v.union(v.string(), v.null()),
+    googleMapsUri: v.union(v.string(), v.null()),
     openingHours: v.union(v.string(), v.null()),
     menuUrl: v.union(v.string(), v.null()),
+    primaryType: v.union(v.string(), v.null()),
     cuisineTags: v.array(v.string()),
     dietaryTags: v.array(v.string()),
     coverImage: v.union(v.string(), v.null()),
@@ -41,6 +46,15 @@ export default defineSchema({
       v.object({
         url: v.string(),
         isCover: v.boolean(),
+        authorAttributions: v.optional(
+          v.array(
+            v.object({
+              displayName: v.union(v.string(), v.null()),
+              uri: v.union(v.string(), v.null()),
+              photoUri: v.union(v.string(), v.null()),
+            }),
+          ),
+        ),
       }),
     ),
     menuItems: v.array(
@@ -53,13 +67,30 @@ export default defineSchema({
     ),
     ownerUserId: v.optional(v.id("users")),
     createdByUserId: v.optional(v.id("users")),
+    isHidden: v.boolean(),
+    hiddenReason: v.union(v.string(), v.null()),
+    hiddenAt: v.union(v.string(), v.null()),
+    hiddenByUserId: v.optional(v.id("users")),
     googlePlaceId: v.union(v.string(), v.null()),
     googleRating: v.union(v.number(), v.null()),
     googleRatingCount: v.number(),
   })
     .index("by_fallback_key", ["fallbackKey"])
     .index("by_source", ["source"])
-    .index("by_owner_user_id", ["ownerUserId"]),
+    .index("by_owner_user_id", ["ownerUserId"])
+    .index("by_google_place_id", ["googlePlaceId"]),
+  nearbySyncCache: defineTable({
+    cacheKey: v.string(),
+    centerLat: v.number(),
+    centerLng: v.number(),
+    radiusMeters: v.number(),
+    status: v.string(),
+    source: v.string(),
+    itemCount: v.number(),
+    lastAttemptAt: v.string(),
+    lastSyncedAt: v.union(v.string(), v.null()),
+    errorMessage: v.union(v.string(), v.null()),
+  }).index("by_cache_key", ["cacheKey"]),
   favorites: defineTable({
     userId: v.id("users"),
     restaurantId: v.id("restaurants"),
@@ -79,4 +110,15 @@ export default defineSchema({
     .index("by_restaurant_id", ["restaurantId"])
     .index("by_user_restaurant", ["userId", "restaurantId"])
     .index("by_user_id", ["userId"]),
+  searchStates: defineTable({
+    userId: v.id("users"),
+    lat: v.number(),
+    lng: v.number(),
+    label: v.string(),
+    shortLabel: v.union(v.string(), v.null()),
+    radiusMeters: v.number(),
+    loadedCount: v.number(),
+    dietaryFilters: v.array(v.string()),
+    updatedAt: v.string(),
+  }).index("by_user_id", ["userId"]),
 });

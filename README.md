@@ -1,91 +1,115 @@
 # Nearbytes
 
-A prototype web app for discovering nearby restaurants with a static frontend, a Convex-backed data path, and a local demo fallback for UI work.
+A restaurant discovery app with a static frontend, a Convex backend, Google Maps for location search, Google Places for nearby restaurant data, and Gemini for light fallback enrichment when Google metadata is incomplete.
 
-## Current Direction
+## Architecture
 
-- Frontend runs as a static app from `public/`
-- Restaurant discovery is routed through `public/services/restaurant-service.js`
-- Convex is the active backend integration path
-- If Convex is unavailable, the app can still run in local demo mode with stable fallback restaurant data
-- UI work can continue without requiring every collaborator to have Convex configured
+- Frontend: static app from `public/`
+- Backend: Convex functions in `convex/`
+- Hosting: Vercel for the frontend, Convex for the backend
+- Map picker: Google Maps JavaScript API
+- Nearby data: Google Places synced through Convex
+- Auth and roles: Convex-backed email/password accounts for `customer`, `owner`, and `moderator`
+
+There is no local restaurant fallback mode anymore. If `CONVEX_URL` is missing, the app is intentionally unconfigured instead of silently switching to demo data.
 
 ## Local Run
 
-0. Use Node.js 22 LTS (recommended) or 20 LTS.
-1. Create env file:
+1. Use Node.js 22 LTS or 20 LTS.
+2. Create your env file:
 
 ```bash
 cp .env.example .env.local
 ```
 
-2. Install dependencies:
+3. Install dependencies:
 
 ```bash
 npm install
 npm install cheerio
 ```
 
-3. Optional: connect Convex:
+4. Connect Convex:
 
 ```bash
 npx convex dev
 ```
 
-This will create/update `.env.local` with your Convex values.
+This creates or updates your local Convex values.
 
-3.5. Optional: preload the demo fallback restaurants into Convex once:
-
-```bash
-npm run convex:seed-demo
-```
-
-If you skip this, the app can still fall back to local demo data without writing to Convex.
-
-4. Start app:
+5. Start the frontend:
 
 ```bash
 npm run dev
 ```
 
-5. Open:
+6. Open:
 
 - `http://localhost:3000`
 
-If `CONVEX_URL` is missing or Convex cannot be reached, the app will fall back to local demo restaurants so frontend work can continue safely.
+`localhost` is treated as a secure origin by modern browsers, so browser geolocation works locally without a custom HTTPS dev certificate.
+
+## Required Environment Variables
+
+Add these to `.env.local` for local work:
+
+```env
+CONVEX_DEPLOYMENT=
+CONVEX_URL=
+CLIENT_ORIGIN=http://localhost:3000
+GOOGLE_MAPS_API_KEY=
+GOOGLE_MAPS_BROWSER_KEY=
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash-lite
+GOOGLE_NEARBY_RADIUS_METERS=5000
+```
+
+Notes:
+
+- `GOOGLE_MAPS_API_KEY` is used on the Convex backend for Google geocoding and Places sync.
+- `GOOGLE_MAPS_BROWSER_KEY` is used by the visible Google map widget in the browser.
+- `GEMINI_API_KEY` is only used when Google metadata is missing menu or tag hints.
+- `GEMINI_MODEL` is optional and defaults to `gemini-2.5-flash-lite` for faster structured tag enrichment.
+- `GOOGLE_PLACES_API_KEY` is still accepted as a legacy alias for the backend key, but `GOOGLE_MAPS_API_KEY` is the preferred name.
+- The frontend build only reads `GOOGLE_MAPS_BROWSER_KEY`. It will not fall back to backend Google keys, so `GOOGLE_MAPS_API_KEY` and `GEMINI_API_KEY` stay server-only.
+
+For Convex actions to see the backend keys, set them on the Convex deployment too:
+
+```bash
+npx convex env set GOOGLE_MAPS_API_KEY ...
+npx convex env set GEMINI_API_KEY ...
+```
+
+Keep `GOOGLE_MAPS_BROWSER_KEY` in `.env.local` for local dev and in Vercel environment variables for production.
+Do not put `GOOGLE_MAPS_API_KEY` or `GEMINI_API_KEY` into Vercel frontend env unless you explicitly intend to expose them.
 
 ## Deploying
 
 ### Convex backend
 
-Local development deployment:
+Development sync:
 
 ```bash
 npx convex dev
 ```
 
-Production deployment from your machine:
+Production deploy from your machine:
 
 ```bash
 npx convex deploy
 ```
 
-This pushes the code in `convex/` to your project's production deployment. Convex keeps the backend separate from Vercel. Your frontend only needs the production `CONVEX_URL`.
-
-See the official docs:
-
-- [Convex project configuration](https://docs.convex.dev/production/project-configuration)
-- [Convex production deploys](https://docs.convex.dev/production)
+This pushes the code in `convex/` to your production Convex deployment.
 
 ### Vercel frontend
 
-This repo now has a static build step:
+Build the static site:
 
 ```bash
 npm run build
 ```
 
-That creates `dist/` and writes a deployment-ready `runtime-config.js` using your environment variables.
+That writes a deployment-ready build to `dist/`.
 
 Recommended Vercel settings:
 
@@ -94,56 +118,48 @@ Recommended Vercel settings:
 - Build Command: `npm run build`
 - Output Directory: `dist`
 
-Set these Vercel environment variables:
+Vercel environment variables:
 
 ```env
 CONVEX_URL=https://your-production-deployment.convex.cloud
 CLIENT_ORIGIN=https://your-app.vercel.app
+GOOGLE_MAPS_BROWSER_KEY=your_browser_restricted_google_maps_key
 ```
 
-`CLIENT_ORIGIN` is included for future HTTP/CORS checks. The current app's browser-to-Convex query/mutation path is protected by backend auth and role checks, not by CORS.
+Recommended browser-key restrictions:
 
-Useful Vercel docs:
+- `http://localhost:3000/*`
+- your Vercel domain
+- `Maps JavaScript API`
 
-- [Deployments](https://vercel.com/docs/platform/deployments)
-- [Project configuration](https://vercel.com/docs/projects/project-configuration)
-- [Environment variables](https://vercel.com/docs/environment-variables)
+## Features In Scope Right Now
 
-## Google Places Setup (Optional)
-
-Add this in `.env.local`:
-
-```env
-GOOGLE_PLACES_API_KEY=your_key_here
-GOOGLE_NEARBY_RADIUS_METERS=3000
-```
-
-Without this key, the app still works with local demo restaurants.
-
-## Stack
-
-- Backend data path: Convex
-- Frontend: Vanilla HTML/CSS/JS SPA
-- Static dev server: lightweight Node HTTP server in `scripts/`
-- Local fallback mode: browser-side demo restaurant data
+- Current location detection with reverse geocoded city labels
+- Manual city/address search with Google geocoding
+- Nearby restaurant loading from Google Places through Convex
+- Pagination with 10 results at a time
+- Google photos when available
+- Customer favorites and reviews
+- Owner-created restaurants, menus, and image URLs
+- Moderator hide/delete restaurant controls
+- Moderator suspend/delete user controls
 
 ## Project Structure
 
 - `convex/schema.ts`: Convex schema
-- `convex/restaurants.ts`: Convex restaurant queries and mutations
-- `convex/fallbackRestaurants.ts`: fallback restaurant records inserted into Convex
+- `convex/auth.ts`: auth, user moderation, session flows
+- `convex/restaurants.ts`: restaurant queries and mutations
+- `convex/googleMaps.ts`: geocoding and reverse geocoding
+- `convex/googlePlaces.ts`: Google Places sync plus Gemini enrichment
 - `public/index.html`: UI shell
-- `public/styles.css`: responsive styles
-- `public/app.js`: frontend app orchestration
-- `public/services/restaurant-service.js`: low-coupling frontend data layer
-- `public/services/demo-restaurants.js`: local demo fallback data
-- `scripts/dev-static.js`: static app server and runtime config route
-- `scripts/dev.js`: local dev entrypoint
+- `public/app.js`: frontend orchestration
+- `public/services/restaurant-service.js`: frontend data boundary
+- `scripts/dev-static.js`: local static dev server with runtime config
+- `scripts/build-static.js`: static production build step
 
 ## Notes
 
-- `convex/_generated/` is intentionally ignored and should stay local to whoever is running Convex.
-- `.env.local` is intentionally ignored and should not be committed.
-- The old Express/SQLite backend has been removed from the active architecture.
-- The app reads from Convex when available, but falls back to local demo data if Convex is empty or unavailable.
-- Frontend/back-end coupling is intentionally narrow: the browser only depends on `CONVEX_URL` and the API adapter in `public/services/restaurant-service.js`.
+- `convex/_generated/` is intentionally ignored and should stay local.
+- `.env.local` is intentionally ignored and should never be committed.
+- `dist/` is generated output and should not be committed.
+- The frontend/backend coupling is intentionally narrow: the browser reads `CONVEX_URL` and talks through `public/services/restaurant-service.js`.

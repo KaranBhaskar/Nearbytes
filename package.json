@@ -13,7 +13,6 @@
     "dev:static": "node scripts/dev-static.js",
     "convex:dev": "npx convex dev --typecheck disable",
     "convex:codegen": "npx convex codegen",
-    "convex:seed-demo": "npx convex run restaurants:ensureFallbackRestaurants",
     "test": "node -e \"console.log('No automated tests configured yet.')\""
   },
   "dependencies": {
