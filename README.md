@@ -7,6 +7,15 @@
 > **Optional maps upgrade:** Add a Google Maps API key to use Google Maps tiles and Google Places data instead of OpenStreetMap.
 
 ---
+## Team
+
+| Name | Role |
+|---|---|
+| Talha Hassan | Project Manager |
+| Karan Bhaskar | Technical Manager |
+| Dev Shah | Front-End Lead |
+| Mohammad Jafari | Back-End Lead |
+| Rayan Khan | Software Quality Lead |
 
 ## Features
 
@@ -233,6 +242,3 @@ PRs are welcome. Please:
 
 ---
 
-## License
-
-MIT

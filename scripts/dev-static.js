@@ -5,7 +5,8 @@ const dotenv = require("dotenv");
 
 const PUBLIC_DIR = path.join(process.cwd(), "public");
 const PORT = Number(process.env.PORT || 3000);
-const HOST = process.env.HOST || "127.0.0.1";
+const rawHost = process.env.HOST || "127.0.0.1";
+const HOST = rawHost === "0.0.0.0" ? "127.0.0.1" : rawHost;
 
 const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
@@ -40,7 +41,9 @@ function getRuntimeConfig() {
     convexUrl: String(env.CONVEX_URL || "").trim(),
     appMode: String(env.CONVEX_URL || "").trim() ? "convex" : "unconfigured",
     clientOrigin: String(env.CLIENT_ORIGIN || "").trim(),
-    nearbyRadiusMeters: Number(env.NEARBY_RADIUS_METERS || env.OSM_NEARBY_RADIUS_METERS || 5000),
+    nearbyRadiusMeters: Number(
+      env.NEARBY_RADIUS_METERS || env.OSM_NEARBY_RADIUS_METERS || 5000,
+    ),
   };
 }
 

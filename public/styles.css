@@ -708,6 +708,69 @@ textarea {
   margin: 14px 0;
 }
 
+/* Leaflet can glitch in modals when generic image/layout rules leak in. */
+.location-map .leaflet-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* Minimal local Leaflet layout rules to keep tiles aligned even if CDN CSS fails. */
+.location-map .leaflet-container {
+  position: relative;
+  overflow: hidden;
+  background: #ddd;
+}
+
+.location-map .leaflet-pane,
+.location-map .leaflet-tile,
+.location-map .leaflet-marker-icon,
+.location-map .leaflet-marker-shadow,
+.location-map .leaflet-tile-container,
+.location-map .leaflet-map-pane,
+.location-map .leaflet-overlay-pane,
+.location-map .leaflet-marker-pane,
+.location-map .leaflet-tooltip-pane,
+.location-map .leaflet-popup-pane,
+.location-map .leaflet-shadow-pane,
+.location-map .leaflet-tile-pane {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.location-map .leaflet-tile-pane {
+  z-index: 200;
+}
+
+.location-map .leaflet-overlay-pane {
+  z-index: 400;
+}
+
+.location-map .leaflet-shadow-pane {
+  z-index: 500;
+}
+
+.location-map .leaflet-marker-pane {
+  z-index: 600;
+}
+
+.location-map .leaflet-popup-pane {
+  z-index: 700;
+}
+
+.location-map .leaflet-container img,
+.location-map .leaflet-container .leaflet-tile {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.location-map .leaflet-pane,
+.location-map .leaflet-tile,
+.location-map .leaflet-marker-icon,
+.location-map .leaflet-marker-shadow {
+  will-change: auto;
+}
+
 .location-map-empty {
   width: 100%;
   height: 100%;

@@ -37,8 +37,36 @@ const DEFAULT_MAP_VIEW = {
 
 const FALLBACK_IMAGE =
   "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=1200&q=80";
+const FALLBACK_IMAGE_POOL = [
+  "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200&q=80",
+  "https://images.unsplash.com/photo-1552566626-52f8b828add9?w=1200&q=80",
+  "https://images.unsplash.com/photo-1559339352-11d035aa65de?w=1200&q=80",
+  "https://images.unsplash.com/photo-1565299585323-38174c4a6d41?w=1200&q=80",
+  "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1200&q=80",
+  "https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?w=1200&q=80",
+  "https://images.unsplash.com/photo-1481833761820-0509d3217039?w=1200&q=80",
+  "https://images.unsplash.com/photo-1528605248644-14dd04022da1?w=1200&q=80",
+];
 const DEFAULT_SEARCH_RADIUS_METERS = 5000;
 const MAX_SEARCH_RADIUS_METERS = 25000;
+const RESTAURANT_RESULTS_CACHE_KEY = "nearbyBites.restaurantResultsCache.v1";
+const MAX_RESTAURANT_CACHE_ENTRIES = 24;
+const SYNTHETIC_TAG_BATCH_SIZE = 6;
+const LOCATION_MAP_INIT_DELAY_MS = 300;
+const FALLBACK_TAG_POOL = [
+  "cozy",
+  "family-friendly",
+  "quick-bites",
+  "date-night",
+  "local-favorite",
+  "late-night",
+  "chef-special",
+  "must-try",
+  "trending",
+  "budget-friendly",
+  "group-friendly",
+  "takeout",
+];
 
 const state = {
   loading: false,
@@ -61,6 +89,7 @@ const state = {
   searchRadiusMeters: DEFAULT_SEARCH_RADIUS_METERS,
   dietaryFilters: [],
   favoritesOnly: false,
+  syntheticTagFallback: null,
 };
 
 const els = {
@@ -88,7 +117,9 @@ const els = {
   ownerPanelTitle: document.getElementById("owner-panel-title"),
   ownerPanelCopy: document.getElementById("owner-panel-copy"),
   toast: document.getElementById("toast"),
-  dietaryFilterInputs: Array.from(document.querySelectorAll('input[name="dietary-filter"]')),
+  dietaryFilterInputs: Array.from(
+    document.querySelectorAll('input[name="dietary-filter"]'),
+  ),
   clearFiltersBtn: document.getElementById("clear-filters"),
   favoritesFilterInput: document.getElementById("favorites-filter"),
   authModal: document.getElementById("auth-modal"),
@@ -100,8 +131,12 @@ const els = {
   ownerRestaurantsList: document.getElementById("owner-restaurants-list"),
   editRestaurantForm: document.getElementById("edit-restaurant-form"),
   editRestaurantSelect: document.getElementById("edit-restaurant-select"),
-  toggleRestaurantVisibilityBtn: document.getElementById("toggle-restaurant-visibility-btn"),
-  restaurantVisibilityStatus: document.getElementById("restaurant-visibility-status"),
+  toggleRestaurantVisibilityBtn: document.getElementById(
+    "toggle-restaurant-visibility-btn",
+  ),
+  restaurantVisibilityStatus: document.getElementById(
+    "restaurant-visibility-status",
+  ),
   deleteRestaurantBtn: document.getElementById("delete-restaurant-btn"),
   uploadImagesForm: document.getElementById("upload-images-form"),
   imageRestaurantSelect: document.getElementById("image-restaurant-select"),
@@ -114,8 +149,12 @@ const els = {
 let observer;
 let locationMap = null;
 let locationMarker = null;
+let googleLocationMarker = null;
+let locationMapProvider = null;
+let locationMapInitTimer = null;
 let locationRestaurantMarkers = [];
 let favorites = loadStoredJson("favorites", []);
+let restaurantResultsCache = loadStoredJson(RESTAURANT_RESULTS_CACHE_KEY, {});
 const loadingMessages = new Set();
 const geminiTaggedRestaurantIds = new Set();
 const geminiTaggingRestaurantIds = new Set();
@@ -179,8 +218,296 @@ function clearLegacyDiscoveryState() {
 }
 
 function normalizeDietaryTag(value) {
-  const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, "-");
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-");
   return normalized === "gluten_free" ? "gluten-free" : normalized;
+}
+
+function normalizeTagForCompare(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-");
+}
+
+function sanitizeTagCollection(tags = []) {
+  const excluded = new Set([
+    "restaurant",
+    "food",
+    "point-of-interest",
+    "establishment",
+    "openstreetmap",
+    "open-street-map",
+    "osm",
+  ]);
+
+  return Array.from(
+    new Set(
+      (tags || [])
+        .map((tag) => String(tag || "").trim())
+        .filter(Boolean)
+        .filter((tag) => {
+          const normalized = normalizeTagForCompare(tag);
+          if (!normalized || excluded.has(normalized)) return false;
+          if (normalized.endsWith("-restaurant")) return false;
+          if (normalized.endsWith("-shop")) return false;
+          if (normalized.endsWith("-store")) return false;
+          return true;
+        }),
+    ),
+  );
+}
+
+function hashString(value) {
+  let hash = 0;
+  const input = String(value || "");
+  for (let index = 0; index < input.length; index += 1) {
+    hash = (hash * 31 + input.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function generateFallbackTags(restaurant) {
+  const seed = `${restaurant?.id || ""}:${restaurant?.name || ""}`;
+  const firstIndex = hashString(seed) % FALLBACK_TAG_POOL.length;
+  const secondIndex =
+    (firstIndex +
+      (hashString(`${seed}:2`) % (FALLBACK_TAG_POOL.length - 1)) +
+      1) %
+    FALLBACK_TAG_POOL.length;
+  return [FALLBACK_TAG_POOL[firstIndex], FALLBACK_TAG_POOL[secondIndex]];
+}
+
+function enrichRestaurantForUi(restaurant) {
+  const currentTags = sanitizeTagCollection([
+    ...(restaurant?.displayTags || []).map(String),
+    ...(restaurant?.dietaryTags || []).map(String),
+    ...(restaurant?.cuisineTags || []).map(String),
+    restaurant?.primaryType || "",
+  ]);
+
+  const displayTags = currentTags.length
+    ? currentTags
+    : generateFallbackTags(restaurant);
+  return {
+    ...restaurant,
+    displayTags,
+  };
+}
+
+function enrichRestaurantListForUi(restaurants = []) {
+  return (restaurants || []).map((restaurant) =>
+    enrichRestaurantForUi(restaurant),
+  );
+}
+
+function cacheKeyForDiscoveryState() {
+  if (!state.location) return "";
+
+  const lat = Number(state.location.lat).toFixed(4);
+  const lng = Number(state.location.lng).toFixed(4);
+  const radius = Number(
+    state.searchRadiusMeters || DEFAULT_SEARCH_RADIUS_METERS,
+  );
+  const dietary = [...(state.dietaryFilters || [])].sort().join("|");
+  return `${lat}:${lng}:r=${radius}:d=${dietary}`;
+}
+
+function cacheKeyForParams({ location, radiusMeters, dietaryFilters = [] }) {
+  if (!location) return "";
+  const lat = Number(location.lat).toFixed(4);
+  const lng = Number(location.lng).toFixed(4);
+  const radius = Number(radiusMeters || DEFAULT_SEARCH_RADIUS_METERS);
+  const dietary = [...(dietaryFilters || [])].sort().join("|");
+  return `${lat}:${lng}:r=${radius}:d=${dietary}`;
+}
+
+function clearSyntheticTagFallback() {
+  state.syntheticTagFallback = null;
+}
+
+function shuffleInPlace(items = []) {
+  for (let index = items.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [items[index], items[randomIndex]] = [items[randomIndex], items[index]];
+  }
+  return items;
+}
+
+function applySelectedTagsToRestaurant(restaurant, selectedTags = []) {
+  const normalizedSelected = selectedTags
+    .map((tag) => normalizeDietaryTag(tag))
+    .filter(Boolean);
+  const currentDietary = (restaurant.dietaryTags || []).map((tag) =>
+    normalizeDietaryTag(tag),
+  );
+  const dietaryTags = Array.from(
+    new Set([...currentDietary, ...normalizedSelected]),
+  );
+  return enrichRestaurantForUi({
+    ...restaurant,
+    dietaryTags,
+  });
+}
+
+function takeSyntheticTagBatch(appendToExisting = false) {
+  const fallback = state.syntheticTagFallback;
+  if (!fallback) {
+    return false;
+  }
+
+  const start = fallback.nextIndex;
+  const end = Math.min(start + SYNTHETIC_TAG_BATCH_SIZE, fallback.pool.length);
+  const batch = fallback.pool.slice(start, end);
+
+  fallback.nextIndex = end;
+  const hasMore = fallback.nextIndex < fallback.pool.length;
+  state.hasMore = hasMore;
+  state.cursor = hasMore ? `synthetic:${fallback.nextIndex}` : null;
+  state.totalRestaurants = fallback.pool.length;
+  state.restaurants = appendToExisting
+    ? [...state.restaurants, ...batch]
+    : batch;
+  saveCurrentRestaurantSnapshot();
+  return batch.length > 0;
+}
+
+async function ensureSyntheticTagFallbackPool() {
+  if (!state.location || !state.dietaryFilters.length) {
+    return false;
+  }
+
+  const fallbackKey = cacheKeyForParams({
+    location: state.location,
+    radiusMeters: state.searchRadiusMeters,
+    dietaryFilters: state.dietaryFilters,
+  });
+
+  if (state.syntheticTagFallback?.key === fallbackKey) {
+    return true;
+  }
+
+  const unfilteredKey = cacheKeyForParams({
+    location: state.location,
+    radiusMeters: state.searchRadiusMeters,
+    dietaryFilters: [],
+  });
+
+  let unfilteredRestaurants = Array.isArray(
+    restaurantResultsCache?.[unfilteredKey]?.restaurants,
+  )
+    ? restaurantResultsCache[unfilteredKey].restaurants
+    : null;
+
+  if (!unfilteredRestaurants || !unfilteredRestaurants.length) {
+    const sourceData = await withLoading(
+      "No exact tag matches. Generating quick tag picks...",
+      () =>
+        listNearbyRestaurants({
+          lat: state.location.lat,
+          lng: state.location.lng,
+          limit: 50,
+          dietary: [],
+          radiusMeters: state.searchRadiusMeters,
+        }),
+    );
+
+    const sourceItems = enrichRestaurantListForUi(
+      Array.isArray(sourceData.items) ? sourceData.items : [],
+    );
+    unfilteredRestaurants = sourceItems;
+    restaurantResultsCache[unfilteredKey] = {
+      restaurants: sourceItems,
+      cursor: sourceData.nextCursor || null,
+      hasMore: Boolean(sourceData.hasMore),
+      totalRestaurants: Number(sourceData.total || sourceItems.length),
+      updatedAt: Date.now(),
+    };
+    pruneRestaurantResultsCache();
+    persistRestaurantResultsCache();
+  }
+
+  if (!unfilteredRestaurants || !unfilteredRestaurants.length) {
+    return false;
+  }
+
+  const randomizedPool = shuffleInPlace([...unfilteredRestaurants]).map(
+    (restaurant) =>
+      applySelectedTagsToRestaurant(restaurant, state.dietaryFilters),
+  );
+
+  state.syntheticTagFallback = {
+    key: fallbackKey,
+    pool: randomizedPool,
+    nextIndex: 0,
+  };
+
+  return true;
+}
+
+function persistRestaurantResultsCache() {
+  try {
+    localStorage.setItem(
+      RESTAURANT_RESULTS_CACHE_KEY,
+      JSON.stringify(restaurantResultsCache),
+    );
+  } catch (_err) {
+    // Ignore storage failures in private mode / quota errors.
+  }
+}
+
+function pruneRestaurantResultsCache() {
+  const entries = Object.entries(restaurantResultsCache || {});
+  if (entries.length <= MAX_RESTAURANT_CACHE_ENTRIES) {
+    return;
+  }
+
+  entries
+    .sort(
+      (a, b) => Number(b?.[1]?.updatedAt || 0) - Number(a?.[1]?.updatedAt || 0),
+    )
+    .slice(MAX_RESTAURANT_CACHE_ENTRIES)
+    .forEach(([key]) => {
+      delete restaurantResultsCache[key];
+    });
+}
+
+function getCachedRestaurantSnapshot() {
+  const key = cacheKeyForDiscoveryState();
+  if (!key) return null;
+  const snapshot = restaurantResultsCache?.[key];
+  if (!snapshot || !Array.isArray(snapshot.restaurants)) {
+    return null;
+  }
+
+  return {
+    restaurants: enrichRestaurantListForUi(snapshot.restaurants),
+    cursor: snapshot.cursor || null,
+    hasMore: Boolean(snapshot.hasMore),
+    totalRestaurants: Number(
+      snapshot.totalRestaurants || snapshot.restaurants.length || 0,
+    ),
+  };
+}
+
+function saveCurrentRestaurantSnapshot() {
+  const key = cacheKeyForDiscoveryState();
+  if (!key || !state.location) return;
+
+  restaurantResultsCache[key] = {
+    restaurants: enrichRestaurantListForUi(state.restaurants),
+    cursor: state.cursor || null,
+    hasMore: Boolean(state.hasMore),
+    totalRestaurants: Number(
+      state.totalRestaurants || state.restaurants.length || 0,
+    ),
+    updatedAt: Date.now(),
+  };
+
+  pruneRestaurantResultsCache();
+  persistRestaurantResultsCache();
 }
 
 function titleCaseWords(value) {
@@ -416,13 +743,36 @@ function hasGoogleMaps() {
   return Boolean(cfg.googleMapsApiKey) && Boolean(window.google?.maps?.Map);
 }
 
+function ensureLeafletStylesheet() {
+  const existing = Array.from(
+    document.querySelectorAll('link[rel="stylesheet"]'),
+  ).some((link) =>
+    String(link.getAttribute("href") || "").includes("leaflet.css"),
+  );
+
+  if (existing) {
+    return;
+  }
+
+  const fallbackLink = document.createElement("link");
+  fallbackLink.rel = "stylesheet";
+  fallbackLink.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+  document.head.appendChild(fallbackLink);
+}
+
 async function waitForGoogleMaps(timeoutMs = 5000) {
   if (window.google?.maps?.Map) return true;
   return new Promise((resolve) => {
     const start = Date.now();
     const check = () => {
-      if (window.google?.maps?.Map) { resolve(true); return; }
-      if (Date.now() - start > timeoutMs) { resolve(false); return; }
+      if (window.google?.maps?.Map) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() - start > timeoutMs) {
+        resolve(false);
+        return;
+      }
       setTimeout(check, 100);
     };
     check();
@@ -430,6 +780,7 @@ async function waitForGoogleMaps(timeoutMs = 5000) {
 }
 
 async function loadLeafletMaps() {
+  ensureLeafletStylesheet();
   if (window.L?.map) return window.L;
   throw new Error("OpenStreetMap map library failed to load.");
 }
@@ -443,6 +794,40 @@ function renderLocationRestaurantMarkers() {
   clearLocationRestaurantMarkers();
 }
 
+function resetLocationMapInstance() {
+  if (locationMapProvider === "leaflet" && locationMap?.remove) {
+    locationMap.remove();
+  }
+
+  if (locationMapProvider === "google" && googleLocationMarker?.setMap) {
+    googleLocationMarker.setMap(null);
+  }
+
+  locationMap = null;
+  locationMarker = null;
+  googleLocationMarker = null;
+  locationMapProvider = null;
+}
+
+function scheduleLeafletMapResizeStabilization() {
+  if (
+    !locationMap ||
+    locationMapProvider !== "leaflet" ||
+    !locationMap.invalidateSize
+  ) {
+    return;
+  }
+
+  [0, 120, 280, 520].forEach((delay) => {
+    window.setTimeout(() => {
+      if (!locationMap || locationMapProvider !== "leaflet") {
+        return;
+      }
+      locationMap.invalidateSize();
+    }, delay);
+  });
+}
+
 function getSelectedManagedRestaurant() {
   if (!state.selectedManagedRestaurantId) {
     return null;
@@ -450,7 +835,8 @@ function getSelectedManagedRestaurant() {
 
   return (
     state.managedRestaurants.find(
-      (restaurant) => String(restaurant.id) === String(state.selectedManagedRestaurantId),
+      (restaurant) =>
+        String(restaurant.id) === String(state.selectedManagedRestaurantId),
     ) || null
   );
 }
@@ -463,8 +849,14 @@ function updateManagedVisibilityControls() {
     return;
   }
 
-  els.toggleRestaurantVisibilityBtn.classList.toggle("hidden", !isModerator || !restaurant);
-  els.restaurantVisibilityStatus.classList.toggle("hidden", !isModerator || !restaurant);
+  els.toggleRestaurantVisibilityBtn.classList.toggle(
+    "hidden",
+    !isModerator || !restaurant,
+  );
+  els.restaurantVisibilityStatus.classList.toggle(
+    "hidden",
+    !isModerator || !restaurant,
+  );
 
   if (!isModerator || !restaurant) {
     els.restaurantVisibilityStatus.textContent = "";
@@ -507,12 +899,17 @@ function renderAuthUI() {
   if (state.user.role === "owner" || state.user.role === "moderator") {
     els.ownerPanel.classList.remove("hidden");
     els.ownerPanelTitle.textContent =
-      state.user.role === "moderator" ? "Moderator Dashboard" : "Owner Dashboard";
+      state.user.role === "moderator"
+        ? "Moderator Dashboard"
+        : "Owner Dashboard";
     els.ownerPanelCopy.textContent =
       state.user.role === "moderator"
         ? "Delete restaurants, remove reviews, and manage user access without changing the rest of the UI."
         : "Create listings, update menus, add photo URLs, and delete restaurants you own.";
-    els.moderatorUsersCard.classList.toggle("hidden", state.user.role !== "moderator");
+    els.moderatorUsersCard.classList.toggle(
+      "hidden",
+      state.user.role !== "moderator",
+    );
   } else {
     els.ownerPanel.classList.add("hidden");
     els.moderatorUsersCard.classList.add("hidden");
@@ -563,25 +960,62 @@ function updateFeedMeta() {
   els.feedMeta.textContent = `${state.totalRestaurants} restaurants found near ${label}${activeDietaryFilterText()}`;
 }
 
-function buildSafeImage(url) {
-  return safeUrl(url) || FALLBACK_IMAGE;
+function buildSafeImage(url, restaurant = null) {
+  const resolved = safeUrl(url);
+  if (resolved) {
+    return resolved;
+  }
+
+  const seed = `${restaurant?.id || ""}:${restaurant?.name || ""}`;
+  const fallbackIndex = hashString(seed) % FALLBACK_IMAGE_POOL.length;
+  return FALLBACK_IMAGE_POOL[fallbackIndex] || FALLBACK_IMAGE;
+}
+
+function fallbackImageForSeed(seed, offset = 0) {
+  const pool = FALLBACK_IMAGE_POOL.length
+    ? FALLBACK_IMAGE_POOL
+    : [FALLBACK_IMAGE];
+  const fallbackIndex =
+    (hashString(seed) + Math.max(0, Number(offset) || 0)) % pool.length;
+  return pool[fallbackIndex] || FALLBACK_IMAGE;
+}
+
+function bindImageFallback(img, seed) {
+  if (!img) {
+    return;
+  }
+
+  let attempt = 0;
+  const maxAttempts = Math.max(1, FALLBACK_IMAGE_POOL.length + 1);
+  img.addEventListener("error", () => {
+    attempt += 1;
+    if (attempt > maxAttempts) {
+      return;
+    }
+    img.src = fallbackImageForSeed(seed, attempt);
+  });
 }
 
 function restaurantDisplayTags(restaurant, limit = 6) {
-  const combined = Array.from(
-    new Set([
-      ...((restaurant.displayTags || []).map(String)),
-      ...((restaurant.dietaryTags || []).map(String)),
-      ...((restaurant.cuisineTags || []).map(String)),
-    ]),
-  );
+  const combined = sanitizeTagCollection([
+    ...(restaurant.displayTags || []).map(String),
+    ...(restaurant.dietaryTags || []).map(String),
+    ...(restaurant.cuisineTags || []).map(String),
+  ]);
+
+  if (!combined.length) {
+    return generateFallbackTags(restaurant).slice(0, limit);
+  }
 
   return combined.slice(0, limit);
 }
 
 function buildTagPillsHtml(restaurant, limit = 6) {
   return restaurantDisplayTags(restaurant, limit)
-    .map((tag) => `<span class="metric-pill">${escapeHtml(titleCaseWords(tag))}</span>`)
+    .map(
+      (tag) =>
+        `<span class="metric-pill">${escapeHtml(titleCaseWords(tag))}</span>`,
+    )
     .join("");
 }
 
@@ -594,8 +1028,12 @@ function patchRestaurantSummaries(updates = []) {
     updates.map((update) => [
       String(update.restaurantId || ""),
       {
-        cuisineTags: Array.isArray(update.cuisineTags) ? update.cuisineTags : [],
-        dietaryTags: Array.isArray(update.dietaryTags) ? update.dietaryTags : [],
+        cuisineTags: Array.isArray(update.cuisineTags)
+          ? update.cuisineTags
+          : [],
+        dietaryTags: Array.isArray(update.dietaryTags)
+          ? update.dietaryTags
+          : [],
         menuItems: Array.isArray(update.menuItems) ? update.menuItems : [],
       },
     ]),
@@ -604,30 +1042,16 @@ function patchRestaurantSummaries(updates = []) {
   state.restaurants = state.restaurants.map((restaurant) => {
     const update = updateMap.get(String(restaurant.id));
     if (!update) {
-      return restaurant;
+      return enrichRestaurantForUi(restaurant);
     }
 
-    const displayTags = Array.from(
-      new Set([
-        ...(update.cuisineTags || []),
-        ...(update.dietaryTags || []),
-        restaurant.primaryType || "",
-      ]),
-    )
-      .filter(Boolean)
-      .filter(
-        (tag) =>
-          !["restaurant", "food", "point-of-interest", "establishment"].includes(String(tag)),
-      )
-      .filter(
-        (tag) =>
-          !String(tag).endsWith("-restaurant") &&
-          !String(tag).endsWith("-shop") &&
-          !String(tag).endsWith("-store"),
-      )
-      .slice(0, 8);
+    const displayTags = sanitizeTagCollection([
+      ...(update.cuisineTags || []),
+      ...(update.dietaryTags || []),
+      restaurant.primaryType || "",
+    ]).slice(0, 8);
 
-    return {
+    return enrichRestaurantForUi({
       ...restaurant,
       cuisineTags: update.cuisineTags,
       dietaryTags: update.dietaryTags,
@@ -636,8 +1060,10 @@ function patchRestaurantSummaries(updates = []) {
           ? restaurant.menuItems
           : update.menuItems,
       displayTags,
-    };
+    });
   });
+
+  saveCurrentRestaurantSnapshot();
 }
 
 async function runBackgroundTagRefresh() {
@@ -666,25 +1092,38 @@ async function runBackgroundTagRefresh() {
   }
 
   geminiRefreshInFlight = true;
-  candidates.forEach((restaurantId) => geminiTaggingRestaurantIds.add(restaurantId));
+  candidates.forEach((restaurantId) =>
+    geminiTaggingRestaurantIds.add(restaurantId),
+  );
 
   try {
-    const updates = await withLoading("Getting smarter restaurant tags...", () =>
-      refineRestaurantTags(candidates),
+    const updates = await withLoading(
+      "Getting smarter restaurant tags...",
+      () => refineRestaurantTags(candidates),
     );
 
     patchRestaurantSummaries(updates);
-    candidates.forEach((restaurantId) => geminiTaggingRestaurantIds.delete(restaurantId));
+    candidates.forEach((restaurantId) =>
+      geminiTaggingRestaurantIds.delete(restaurantId),
+    );
     updates.forEach((update) => {
       geminiTaggedRestaurantIds.add(String(update.restaurantId || ""));
     });
 
     renderRestaurantList();
-    if (state.selectedRestaurantId && updates.some((update) => String(update.restaurantId) === String(state.selectedRestaurantId))) {
+    if (
+      state.selectedRestaurantId &&
+      updates.some(
+        (update) =>
+          String(update.restaurantId) === String(state.selectedRestaurantId),
+      )
+    ) {
       loadRestaurantDetails(state.selectedRestaurantId).catch(() => {});
     }
   } catch (_error) {
-    candidates.forEach((restaurantId) => geminiTaggingRestaurantIds.delete(restaurantId));
+    candidates.forEach((restaurantId) =>
+      geminiTaggingRestaurantIds.delete(restaurantId),
+    );
   } finally {
     geminiRefreshInFlight = false;
     if (geminiRefreshQueued) {
@@ -711,14 +1150,19 @@ function renderRestaurantCard(restaurant) {
   const tagPillsHtml = buildTagPillsHtml(restaurant, 5);
 
   const sourceLabel =
-    restaurant.source === "manual" ? "Owner submitted" : titleCaseWords(restaurant.source);
+    restaurant.source === "manual"
+      ? "Owner submitted"
+      : titleCaseWords(restaurant.source);
+  const hideSourcePill = ["openstreetmap", "open-street-map", "osm"].includes(
+    normalizeTagForCompare(sourceLabel),
+  );
   const favoriteIcon = favoriteIconFor(restaurant.id);
 
   card.innerHTML = `
     <button class="fav-btn ${isFavorite(restaurant.id) ? "active" : ""}" data-id="${escapeHtml(
       restaurant.id,
     )}" aria-label="Save favorite">${favoriteIcon}</button>
-    <img src="${escapeHtml(buildSafeImage(restaurant.coverImage))}" alt="${escapeHtml(
+    <img src="${escapeHtml(buildSafeImage(restaurant.coverImage, restaurant))}" alt="${escapeHtml(
       restaurant.name,
     )}" loading="lazy" />
     <div class="restaurant-card-body">
@@ -730,7 +1174,7 @@ function renderRestaurantCard(restaurant) {
         <span class="metric-pill">Combined: ${escapeHtml(
           ratingText(restaurant.combinedRating, restaurant.combinedRatingCount),
         )}</span>
-        <span class="metric-pill">${escapeHtml(sourceLabel)}</span>
+        ${hideSourcePill ? "" : `<span class="metric-pill">${escapeHtml(sourceLabel)}</span>`}
       </div>
     </div>
   `;
@@ -738,8 +1182,16 @@ function renderRestaurantCard(restaurant) {
   card.addEventListener("click", () => {
     state.selectedRestaurantId = restaurant.id;
     renderRestaurantList();
-    loadRestaurantDetails(restaurant.id).catch((err) => showToast(err.message, true));
+    loadRestaurantDetails(restaurant.id).catch((err) =>
+      showToast(err.message, true),
+    );
   });
+
+  const cardImage = card.querySelector("img");
+  bindImageFallback(
+    cardImage,
+    `${restaurant.id || ""}:${restaurant.name || ""}:card`,
+  );
 
   const favoriteButton = card.querySelector(".fav-btn");
   favoriteButton.addEventListener("click", async (event) => {
@@ -750,9 +1202,13 @@ function renderRestaurantCard(restaurant) {
       favoriteButton.textContent = favoriteIconFor(restaurant.id);
 
       if (state.selectedRestaurantId === restaurant.id) {
-        const detailFavoriteButton = els.detailsPanel.querySelector(".fav-btn.large");
+        const detailFavoriteButton =
+          els.detailsPanel.querySelector(".fav-btn.large");
         if (detailFavoriteButton) {
-          detailFavoriteButton.classList.toggle("active", isFavorite(restaurant.id));
+          detailFavoriteButton.classList.toggle(
+            "active",
+            isFavorite(restaurant.id),
+          );
           detailFavoriteButton.textContent = favoriteIconFor(restaurant.id);
         }
       }
@@ -808,7 +1264,10 @@ function renderFeedLoader() {
         ? "Search Farther"
         : "No More Restaurants Nearby";
     els.loadMoreBtn.disabled = false;
-    els.loadMoreBtn.classList.toggle("hidden", state.searchRadiusMeters >= MAX_SEARCH_RADIUS_METERS);
+    els.loadMoreBtn.classList.toggle(
+      "hidden",
+      state.searchRadiusMeters >= MAX_SEARCH_RADIUS_METERS,
+    );
     return;
   }
 
@@ -821,7 +1280,7 @@ function renderFeedLoader() {
 function renderDetailsPlaceholder() {
   state.currentDetail = null;
   els.detailsPanel.innerHTML =
-    "<h2>Restaurant Details</h2><p class=\"muted\">Select a restaurant to view menu, photos, and reviews.</p>";
+    '<h2>Restaurant Details</h2><p class="muted">Select a restaurant to view menu, photos, and reviews.</p>';
 }
 
 function reviewStarsText(rating) {
@@ -839,7 +1298,9 @@ function renderReviewComposer(detail) {
 
   const myReview = detail.myReview;
   const reviewText = escapeHtml(myReview?.comment || "");
-  const selectedRating = Number(myReview?.rating || state.pendingReviewRating || 0);
+  const selectedRating = Number(
+    myReview?.rating || state.pendingReviewRating || 0,
+  );
   const starButtons = Array.from({ length: 5 }, (_entry, index) => {
     const rating = index + 1;
     return `<button type="button" class="star-btn ${rating <= selectedRating ? "active" : ""}" data-rating="${rating}">★</button>`;
@@ -900,8 +1361,13 @@ function bindDetailsEvents(detail) {
       event.stopPropagation();
       try {
         await toggleFavorite(detail.restaurant.id);
-        detailFavoriteButton.classList.toggle("active", isFavorite(detail.restaurant.id));
-        detailFavoriteButton.textContent = favoriteIconFor(detail.restaurant.id);
+        detailFavoriteButton.classList.toggle(
+          "active",
+          isFavorite(detail.restaurant.id),
+        );
+        detailFavoriteButton.textContent = favoriteIconFor(
+          detail.restaurant.id,
+        );
         renderRestaurantList();
       } catch (error) {
         showToast(error.message, true);
@@ -909,10 +1375,13 @@ function bindDetailsEvents(detail) {
     });
   }
 
-  const reviewStars = Array.from(els.detailsPanel.querySelectorAll(".star-btn"));
+  const reviewStars = Array.from(
+    els.detailsPanel.querySelectorAll(".star-btn"),
+  );
   const reviewStarsContainer = els.detailsPanel.querySelector("#review-stars");
   const reviewForm = els.detailsPanel.querySelector("#review-form");
-  const deleteOwnReviewBtn = els.detailsPanel.querySelector("#delete-own-review");
+  const deleteOwnReviewBtn =
+    els.detailsPanel.querySelector("#delete-own-review");
 
   const refreshStarButtons = () => {
     reviewStars.forEach((button) => {
@@ -920,7 +1389,10 @@ function bindDetailsEvents(detail) {
       button.classList.toggle("active", rating <= state.pendingReviewRating);
     });
     if (reviewStarsContainer) {
-      reviewStarsContainer.classList.toggle("error", state.pendingReviewRating <= 0);
+      reviewStarsContainer.classList.toggle(
+        "error",
+        state.pendingReviewRating <= 0,
+      );
     }
   };
 
@@ -993,7 +1465,9 @@ function bindDetailsEvents(detail) {
     });
   });
 
-  const toggleDetailVisibilityBtn = els.detailsPanel.querySelector("#toggle-detail-visibility");
+  const toggleDetailVisibilityBtn = els.detailsPanel.querySelector(
+    "#toggle-detail-visibility",
+  );
   if (toggleDetailVisibilityBtn && detail.permissions?.canModerate) {
     toggleDetailVisibilityBtn.addEventListener("click", async () => {
       const isHidden = Boolean(detail.restaurant.isHidden);
@@ -1013,7 +1487,11 @@ function bindDetailsEvents(detail) {
         await refreshManagementData();
         await resetAndReloadRestaurants();
         await loadRestaurantDetails(detail.restaurant.id);
-        showToast(isHidden ? "Restaurant is visible again." : "Restaurant hidden from public discovery.");
+        showToast(
+          isHidden
+            ? "Restaurant is visible again."
+            : "Restaurant hidden from public discovery.",
+        );
       } catch (error) {
         showToast(error.message, true);
       }
@@ -1075,7 +1553,9 @@ async function loadRestaurantDetails(restaurantId) {
         ratingText(restaurant.combinedRating, restaurant.combinedRatingCount),
       )}</span>
       <span class="metric-pill">${escapeHtml(
-        restaurant.source === "manual" ? "Owner submitted" : titleCaseWords(restaurant.source),
+        restaurant.source === "manual"
+          ? "Owner submitted"
+          : titleCaseWords(restaurant.source),
       )}</span>
     </div>
 
@@ -1112,11 +1592,14 @@ async function loadRestaurantDetails(restaurantId) {
                       restaurant.name,
                     )}" loading="lazy" />
                     ${
-                      Array.isArray(image.authorAttributions) && image.authorAttributions.length
+                      Array.isArray(image.authorAttributions) &&
+                      image.authorAttributions.length
                         ? `<p class="muted image-credit">Photo: ${image.authorAttributions
                             .map((attribution) => {
                               const uri = safeUrl(attribution.uri);
-                              const name = escapeHtml(attribution.displayName || "Contributor");
+                              const name = escapeHtml(
+                                attribution.displayName || "Contributor",
+                              );
                               return uri
                                 ? `<a href="${escapeHtml(uri)}" target="_blank" rel="noreferrer">${name}</a>`
                                 : name;
@@ -1145,7 +1628,9 @@ async function loadRestaurantDetails(restaurantId) {
                         <p class="muted">${escapeHtml(item.description || "")}</p>
                       </div>
                       <span>${
-                        Number(item.price) > 0 ? `$${Number(item.price).toFixed(2)}` : "Price unavailable"
+                        Number(item.price) > 0
+                          ? `$${Number(item.price).toFixed(2)}`
+                          : "Price unavailable"
                       }</span>
                     </div>
                   `,
@@ -1183,13 +1668,24 @@ async function loadRestaurantDetails(restaurantId) {
                 }</p>
               </div>
               <button id="toggle-detail-visibility" type="button" class="btn btn-outline">${
-                restaurant.isHidden ? "Unhide Restaurant" : "Hide from Discovery"
+                restaurant.isHidden
+                  ? "Unhide Restaurant"
+                  : "Hide from Discovery"
               }</button>
             </div>
           </div>`
         : ""
     }
   `;
+
+  Array.from(els.detailsPanel.querySelectorAll(".detail-gallery img")).forEach(
+    (image, index) => {
+      bindImageFallback(
+        image,
+        `${restaurant.id || ""}:${restaurant.name || ""}:detail:${index}`,
+      );
+    },
+  );
 
   bindDetailsEvents(detail);
 }
@@ -1200,7 +1696,11 @@ function updateSelectedLocationText() {
 }
 
 function hasStoredLocation() {
-  return Boolean(state.location && Number.isFinite(state.location.lat) && Number.isFinite(state.location.lng));
+  return Boolean(
+    state.location &&
+    Number.isFinite(state.location.lat) &&
+    Number.isFinite(state.location.lng),
+  );
 }
 
 function getSilentCurrentPosition() {
@@ -1226,7 +1726,9 @@ async function silentlyInitializeCurrentLocation() {
     return false;
   }
 
-  const position = await withLoading("Detecting your location...", () => getSilentCurrentPosition());
+  const position = await withLoading("Detecting your location...", () =>
+    getSilentCurrentPosition(),
+  );
   if (!position) {
     return false;
   }
@@ -1247,8 +1749,11 @@ async function silentlyInitializeCurrentLocation() {
   }
 
   state.location = { lat, lng };
-  state.locationRawLabel = String(resolvedLocation?.label || `${lat.toFixed(4)}, ${lng.toFixed(4)}`).trim();
-  state.locationLabel = getCompactLocationLabel(resolvedLocation) || state.locationRawLabel;
+  state.locationRawLabel = String(
+    resolvedLocation?.label || `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+  ).trim();
+  state.locationLabel =
+    getCompactLocationLabel(resolvedLocation) || state.locationRawLabel;
   persistDiscoveryState();
   updateSelectedLocationText();
   els.locationStatus.textContent = `Showing restaurants near ${state.locationLabel}`;
@@ -1258,16 +1763,27 @@ async function silentlyInitializeCurrentLocation() {
 function openLocationModal() {
   els.locationModal.classList.remove("hidden");
   setLocationSearchInputValue(state.locationRawLabel || state.locationLabel);
-  window.setTimeout(() => {
+
+  if (locationMapInitTimer) {
+    window.clearTimeout(locationMapInitTimer);
+    locationMapInitTimer = null;
+  }
+
+  locationMapInitTimer = window.setTimeout(() => {
+    locationMapInitTimer = null;
     initLocationMap().catch((error) => {
       els.mapSelectionStatus.textContent = error.message;
       renderLocationMapMessage(error.message, true);
       showToast(error.message, true);
     });
-  }, 0);
+  }, LOCATION_MAP_INIT_DELAY_MS);
 }
 
 function closeLocationModal() {
+  if (locationMapInitTimer) {
+    window.clearTimeout(locationMapInitTimer);
+    locationMapInitTimer = null;
+  }
   els.locationModal.classList.add("hidden");
 }
 
@@ -1290,7 +1806,65 @@ function setPendingMapLocation(lat, lng, label = null, shortLabel = null) {
   state.pendingMapLocation = { lat, lng, label, shortLabel };
   setLocationSearchInputValue(label || shortLabel || "");
 
-  if (!locationMap || !window.L?.marker) {
+  if (!locationMap) {
+    return;
+  }
+
+  if (locationMapProvider === "google" && window.google?.maps?.Marker) {
+    if (!googleLocationMarker) {
+      googleLocationMarker = new window.google.maps.Marker({
+        position: { lat, lng },
+        map: locationMap,
+        draggable: true,
+        title: "Selected location",
+      });
+
+      googleLocationMarker.addListener("dragend", async () => {
+        const markerPosition = googleLocationMarker.getPosition();
+        const nextLat = markerPosition?.lat();
+        const nextLng = markerPosition?.lng();
+        if (!Number.isFinite(nextLat) || !Number.isFinite(nextLng)) {
+          return;
+        }
+
+        state.pendingMapLocation = {
+          lat: nextLat,
+          lng: nextLng,
+          label:
+            state.pendingMapLocation?.label ||
+            `${nextLat.toFixed(4)}, ${nextLng.toFixed(4)}`,
+          shortLabel: state.pendingMapLocation?.shortLabel || null,
+        };
+
+        try {
+          const location = await reverseGeocodeLocation(nextLat, nextLng);
+          state.pendingMapLocation.label = location.label;
+          state.pendingMapLocation.shortLabel = location.shortLabel || null;
+          els.mapSelectionStatus.textContent = `Selected: ${getCompactLocationLabel(location)}`;
+        } catch (_err) {
+          els.mapSelectionStatus.textContent = `Selected pin at ${nextLat.toFixed(5)}, ${nextLng.toFixed(5)}`;
+        }
+      });
+    } else {
+      googleLocationMarker.setPosition({ lat, lng });
+      googleLocationMarker.setMap(locationMap);
+    }
+
+    locationMap.panTo({ lat, lng });
+    if (
+      typeof locationMap.getZoom === "function" &&
+      locationMap.getZoom() < 14
+    ) {
+      locationMap.setZoom(14);
+    }
+
+    els.mapSelectionStatus.textContent = label
+      ? `Selected: ${getCompactLocationLabel({ label, shortLabel })}`
+      : `Selected pin at ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    return;
+  }
+
+  if (!window.L?.marker) {
     return;
   }
 
@@ -1307,7 +1881,9 @@ function setPendingMapLocation(lat, lng, label = null, shortLabel = null) {
       state.pendingMapLocation = {
         lat: nextLat,
         lng: nextLng,
-        label: state.pendingMapLocation?.label || `${nextLat.toFixed(4)}, ${nextLng.toFixed(4)}`,
+        label:
+          state.pendingMapLocation?.label ||
+          `${nextLat.toFixed(4)}, ${nextLng.toFixed(4)}`,
         shortLabel: state.pendingMapLocation?.shortLabel || null,
       };
 
@@ -1333,57 +1909,61 @@ function setPendingMapLocation(lat, lng, label = null, shortLabel = null) {
 async function initLocationMap() {
   const mapElement = document.getElementById("location-map");
   if (!mapElement) return;
+  resetLocationMapInstance();
   mapElement.innerHTML = "";
 
   // ── Try Google Maps first if key is present ───────────────────────────────
   const cfg = getRuntimeConfig();
   if (cfg.googleMapsApiKey) {
-    const ready = await withLoading("Loading map...", () => waitForGoogleMaps(5000));
+    const ready = await withLoading("Loading map...", () =>
+      waitForGoogleMaps(5000),
+    );
     if (ready) {
-      if (!locationMap) {
-        const center = {
-          lat: state.pendingMapLocation?.lat ?? state.location?.lat ?? DEFAULT_MAP_VIEW.lat,
-          lng: state.pendingMapLocation?.lng ?? state.location?.lng ?? DEFAULT_MAP_VIEW.lng,
-        };
-        locationMap = new window.google.maps.Map(mapElement, {
-          center,
-          zoom: 13,
-          mapTypeControl: false,
-          streetViewControl: false,
-          fullscreenControl: false,
-        });
+      const center = {
+        lat:
+          state.pendingMapLocation?.lat ??
+          state.location?.lat ??
+          DEFAULT_MAP_VIEW.lat,
+        lng:
+          state.pendingMapLocation?.lng ??
+          state.location?.lng ??
+          DEFAULT_MAP_VIEW.lng,
+      };
+      locationMap = new window.google.maps.Map(mapElement, {
+        center,
+        zoom: 13,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+      });
+      locationMapProvider = "google";
 
-        locationMap.addListener("click", async (event) => {
-          const lat = event.latLng.lat();
-          const lng = event.latLng.lng();
-          setPendingMapLocation(lat, lng);
-          try {
-            const location = await reverseGeocodeLocation(lat, lng);
-            state.pendingMapLocation.label = location.label;
-            state.pendingMapLocation.shortLabel = location.shortLabel || null;
-            els.mapSelectionStatus.textContent = `Selected: ${getCompactLocationLabel(location)}`;
-          } catch (_err) {
-            els.mapSelectionStatus.textContent = `Selected pin at ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-          }
-        });
-      } else {
-        // Recenter on re-open
-        const center = {
-          lat: state.pendingMapLocation?.lat ?? state.location?.lat ?? DEFAULT_MAP_VIEW.lat,
-          lng: state.pendingMapLocation?.lng ?? state.location?.lng ?? DEFAULT_MAP_VIEW.lng,
-        };
-        locationMap.setCenter(center);
-      }
+      locationMap.addListener("click", async (event) => {
+        const lat = event.latLng.lat();
+        const lng = event.latLng.lng();
+        setPendingMapLocation(lat, lng);
+        try {
+          const location = await reverseGeocodeLocation(lat, lng);
+          state.pendingMapLocation.label = location.label;
+          state.pendingMapLocation.shortLabel = location.shortLabel || null;
+          els.mapSelectionStatus.textContent = `Selected: ${getCompactLocationLabel(location)}`;
+        } catch (_err) {
+          els.mapSelectionStatus.textContent = `Selected pin at ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        }
+      });
 
       if (state.location) {
         setPendingMapLocation(
-          state.location.lat, state.location.lng,
-          state.locationRawLabel || state.locationLabel, state.locationLabel
+          state.location.lat,
+          state.location.lng,
+          state.locationRawLabel || state.locationLabel,
+          state.locationLabel,
         );
       } else {
         state.pendingMapLocation = null;
         setLocationSearchInputValue("");
-        els.mapSelectionStatus.textContent = "Use your current location, search a city, or click the map to drop a pin.";
+        els.mapSelectionStatus.textContent =
+          "Use your current location, search a city, or click the map to drop a pin.";
       }
       return;
     }
@@ -1393,48 +1973,74 @@ async function initLocationMap() {
   // ── Leaflet / OpenStreetMap fallback ─────────────────────────────────────
   const L = await withLoading("Loading map...", () => loadLeafletMaps());
 
-  if (!locationMap) {
-    locationMap = L.map(mapElement).setView([DEFAULT_MAP_VIEW.lat, DEFAULT_MAP_VIEW.lng], 12);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors",
-      maxZoom: 19,
-    }).addTo(locationMap);
+  locationMap = L.map(mapElement, {
+    zoomAnimation: false,
+    fadeAnimation: false,
+    markerZoomAnimation: false,
+    preferCanvas: true,
+  }).setView([DEFAULT_MAP_VIEW.lat, DEFAULT_MAP_VIEW.lng], 12);
+  locationMapProvider = "leaflet";
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19,
+  }).addTo(locationMap);
 
-    locationMap.on("click", async (event) => {
-      const lat = event.latlng?.lat;
-      const lng = event.latlng?.lng;
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-      setPendingMapLocation(lat, lng);
-      try {
-        const location = await reverseGeocodeLocation(lat, lng);
-        state.pendingMapLocation.label = location.label;
-        state.pendingMapLocation.shortLabel = location.shortLabel || null;
-        els.mapSelectionStatus.textContent = `Selected: ${getCompactLocationLabel(location)}`;
-      } catch (_err) {
-        els.mapSelectionStatus.textContent = `Selected pin at ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-      }
-    });
-  }
+  locationMap.on("click", async (event) => {
+    const lat = event.latlng?.lat;
+    const lng = event.latlng?.lng;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    setPendingMapLocation(lat, lng);
+    try {
+      const location = await reverseGeocodeLocation(lat, lng);
+      state.pendingMapLocation.label = location.label;
+      state.pendingMapLocation.shortLabel = location.shortLabel || null;
+      els.mapSelectionStatus.textContent = `Selected: ${getCompactLocationLabel(location)}`;
+    } catch (_err) {
+      els.mapSelectionStatus.textContent = `Selected pin at ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    }
+  });
+
+  scheduleLeafletMapResizeStabilization();
 
   window.setTimeout(() => {
     if (locationMap && locationMap.invalidateSize) {
       locationMap.invalidateSize();
       locationMap.setView(
-        [state.pendingMapLocation?.lat ?? state.location?.lat ?? DEFAULT_MAP_VIEW.lat,
-         state.pendingMapLocation?.lng ?? state.location?.lng ?? DEFAULT_MAP_VIEW.lng],
-        locationMap.getZoom()
+        [
+          state.pendingMapLocation?.lat ??
+            state.location?.lat ??
+            DEFAULT_MAP_VIEW.lat,
+          state.pendingMapLocation?.lng ??
+            state.location?.lng ??
+            DEFAULT_MAP_VIEW.lng,
+        ],
+        locationMap.getZoom(),
       );
     }
   }, 100);
 
   if (state.location) {
-    setPendingMapLocation(state.location.lat, state.location.lng, state.locationRawLabel || state.locationLabel, state.locationLabel);
+    setPendingMapLocation(
+      state.location.lat,
+      state.location.lng,
+      state.locationRawLabel || state.locationLabel,
+      state.locationLabel,
+    );
   } else {
     state.pendingMapLocation = null;
     setLocationSearchInputValue("");
     clearLocationRestaurantMarkers();
-    if (locationMarker) { locationMarker.remove(); locationMarker = null; }
-    els.mapSelectionStatus.textContent = "Use your current location, search a city, or click the map to drop a pin.";
+    if (locationMarker?.remove) {
+      locationMarker.remove();
+      locationMarker = null;
+    }
+    if (googleLocationMarker?.setMap) {
+      googleLocationMarker.setMap(null);
+      googleLocationMarker = null;
+    }
+    els.mapSelectionStatus.textContent =
+      "Use your current location, search a city, or click the map to drop a pin.";
   }
 
   renderLocationRestaurantMarkers();
@@ -1447,9 +2053,12 @@ async function applySelectedLocation(location) {
   };
   state.searchRadiusMeters = DEFAULT_SEARCH_RADIUS_METERS;
   state.locationRawLabel = String(
-    location.label || location.shortLabel || `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`,
+    location.label ||
+      location.shortLabel ||
+      `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`,
   ).trim();
-  state.locationLabel = getCompactLocationLabel(location) || state.locationRawLabel;
+  state.locationLabel =
+    getCompactLocationLabel(location) || state.locationRawLabel;
   setLocationSearchInputValue(state.locationRawLabel);
   persistDiscoveryState();
   updateSelectedLocationText();
@@ -1476,7 +2085,12 @@ async function useBrowserLocationInModal() {
         const location = await withLoading("Resolving your city...", () =>
           reverseGeocodeLocation(lat, lng),
         );
-        setPendingMapLocation(lat, lng, location.label, location.shortLabel || null);
+        setPendingMapLocation(
+          lat,
+          lng,
+          location.label,
+          location.shortLabel || null,
+        );
         await applySelectedLocation({
           lat,
           lng,
@@ -1484,7 +2098,12 @@ async function useBrowserLocationInModal() {
           shortLabel: location.shortLabel || null,
         });
       } catch (_err) {
-        setPendingMapLocation(lat, lng, `${lat.toFixed(4)}, ${lng.toFixed(4)}`, null);
+        setPendingMapLocation(
+          lat,
+          lng,
+          `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+          null,
+        );
         await applySelectedLocation({
           lat,
           lng,
@@ -1505,9 +2124,14 @@ async function useBrowserLocationInModal() {
 }
 
 async function searchLocationInModal() {
-  const query = String(els.modalLocationQuery.value || state.locationRawLabel || "").trim();
+  const query = String(
+    els.modalLocationQuery.value || state.locationRawLabel || "",
+  ).trim();
   if (!query) {
-    showToast("Use your current location or enter a city, address, or zip.", true);
+    showToast(
+      "Use your current location or enter a city, address, or zip.",
+      true,
+    );
     return;
   }
 
@@ -1516,7 +2140,12 @@ async function searchLocationInModal() {
     const location = await withLoading("Searching for that location...", () =>
       searchMapLocation(query),
     );
-    setPendingMapLocation(location.lat, location.lng, location.label, location.shortLabel || null);
+    setPendingMapLocation(
+      location.lat,
+      location.lng,
+      location.label,
+      location.shortLabel || null,
+    );
   } catch (err) {
     showToast(err.message, true);
     els.mapSelectionStatus.textContent = "Search failed. Try another query.";
@@ -1555,12 +2184,42 @@ async function loadMoreRestaurants() {
     return;
   }
 
+  if (state.syntheticTagFallback) {
+    const loadedSynthetic = takeSyntheticTagBatch(true);
+    if (loadedSynthetic) {
+      state.loadError = "";
+      renderRestaurantList();
+      renderLocationRestaurantMarkers();
+      renderFeedLoader();
+      return;
+    }
+    clearSyntheticTagFallback();
+  }
+
+  if (!state.cursor) {
+    const cached = getCachedRestaurantSnapshot();
+    if (cached) {
+      state.restaurants = cached.restaurants;
+      state.cursor = cached.cursor;
+      state.hasMore = cached.hasMore;
+      state.totalRestaurants = cached.totalRestaurants;
+      state.loadError = "";
+      renderRestaurantList();
+      renderLocationRestaurantMarkers();
+      renderFeedLoader();
+      queueBackgroundTagRefresh();
+      return;
+    }
+  }
+
   state.loading = true;
   state.loadError = "";
   renderFeedLoader();
 
   try {
-    const loadingMessage = state.cursor ? "Loading more restaurants..." : "Loading nearby restaurants...";
+    const loadingMessage = state.cursor
+      ? "Loading more restaurants..."
+      : "Loading nearby restaurants...";
     const data = await withLoading(loadingMessage, () =>
       listNearbyRestaurants({
         lat: state.location.lat,
@@ -1573,16 +2232,36 @@ async function loadMoreRestaurants() {
     );
 
     const nextItems = Array.isArray(data.items) ? data.items : [];
-    state.restaurants = state.cursor ? [...state.restaurants, ...nextItems] : nextItems;
+    const normalizedNextItems = enrichRestaurantListForUi(nextItems);
+    state.restaurants = state.cursor
+      ? enrichRestaurantListForUi([
+          ...state.restaurants,
+          ...normalizedNextItems,
+        ])
+      : normalizedNextItems;
+    if (!normalizedNextItems.length && state.dietaryFilters.length) {
+      const hasSyntheticPool = await ensureSyntheticTagFallbackPool();
+      if (hasSyntheticPool && takeSyntheticTagBatch(false)) {
+        state.loadError = "";
+        renderRestaurantList();
+        renderLocationRestaurantMarkers();
+        renderFeedLoader();
+        return;
+      }
+    }
+
+    clearSyntheticTagFallback();
     state.cursor = data.nextCursor || null;
     state.hasMore = Boolean(data.hasMore);
     state.totalRestaurants = Number(data.total || state.restaurants.length);
+    saveCurrentRestaurantSnapshot();
     renderRestaurantList();
     renderLocationRestaurantMarkers();
     await persistCustomerSearchState();
     queueBackgroundTagRefresh();
   } catch (error) {
-    state.loadError = error?.message || "Unable to load nearby restaurants right now.";
+    state.loadError =
+      error?.message || "Unable to load nearby restaurants right now.";
     renderRestaurantList();
     throw error;
   } finally {
@@ -1598,6 +2277,7 @@ async function resetAndReloadRestaurants() {
   state.hasMore = true;
   state.totalRestaurants = 0;
   state.selectedRestaurantId = null;
+  clearSyntheticTagFallback();
   persistDiscoveryState();
   renderDetailsPlaceholder();
   renderRestaurantList();
@@ -1608,14 +2288,19 @@ async function resetAndReloadRestaurants() {
 }
 
 async function expandSearchRadius() {
-  if (!state.location || state.loading || state.searchRadiusMeters >= MAX_SEARCH_RADIUS_METERS) {
+  if (
+    !state.location ||
+    state.loading ||
+    state.searchRadiusMeters >= MAX_SEARCH_RADIUS_METERS
+  ) {
     return;
   }
 
-  state.searchRadiusMeters = Math.min(state.searchRadiusMeters + 5000, MAX_SEARCH_RADIUS_METERS);
-  showToast(
-    `Searching farther from ${state.locationLabel || "your area"}...`,
+  state.searchRadiusMeters = Math.min(
+    state.searchRadiusMeters + 5000,
+    MAX_SEARCH_RADIUS_METERS,
   );
+  showToast(`Searching farther from ${state.locationLabel || "your area"}...`);
   state.hasMore = true;
   state.loadError = "";
   state.loading = true;
@@ -1635,10 +2320,14 @@ async function expandSearchRadius() {
     );
 
     const nextItems = Array.isArray(data.items) ? data.items : [];
-    state.restaurants = [...state.restaurants, ...nextItems];
+    state.restaurants = enrichRestaurantListForUi([
+      ...state.restaurants,
+      ...nextItems,
+    ]);
     state.cursor = data.nextCursor || null;
     state.hasMore = Boolean(data.hasMore);
     state.totalRestaurants = Number(data.total || state.restaurants.length);
+    saveCurrentRestaurantSnapshot();
     renderRestaurantList();
     renderLocationRestaurantMarkers();
     await persistCustomerSearchState();
@@ -1693,7 +2382,9 @@ async function buildRestaurantPayload(form) {
   const lng = verifiedLocation?.lng ?? state.location?.lng;
 
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    throw new Error("Choose a location first so the restaurant can be placed correctly.");
+    throw new Error(
+      "Choose a location first so the restaurant can be placed correctly.",
+    );
   }
 
   return {
@@ -1720,7 +2411,9 @@ function setFormField(form, name, value) {
 
 function populateEditForm(restaurantId) {
   const restaurant =
-    state.managedRestaurants.find((item) => String(item.id) === String(restaurantId)) || null;
+    state.managedRestaurants.find(
+      (item) => String(item.id) === String(restaurantId),
+    ) || null;
   state.selectedManagedRestaurantId = restaurant ? restaurant.id : null;
 
   if (!restaurant) {
@@ -1734,16 +2427,35 @@ function populateEditForm(restaurantId) {
   setFormField(els.editRestaurantForm, "address", restaurant.address);
   setFormField(els.editRestaurantForm, "phone", restaurant.phone || "");
   setFormField(els.editRestaurantForm, "website", restaurant.website || "");
-  setFormField(els.editRestaurantForm, "openingHours", restaurant.openingHours || "");
+  setFormField(
+    els.editRestaurantForm,
+    "openingHours",
+    restaurant.openingHours || "",
+  );
   setFormField(els.editRestaurantForm, "menuUrl", restaurant.menuUrl || "");
-  setFormField(els.editRestaurantForm, "cuisineTags", (restaurant.cuisineTags || []).join(", "));
-  setFormField(els.editRestaurantForm, "dietaryTags", (restaurant.dietaryTags || []).join(", "));
-  setFormField(els.editRestaurantForm, "description", restaurant.description || "");
+  setFormField(
+    els.editRestaurantForm,
+    "cuisineTags",
+    (restaurant.cuisineTags || []).join(", "),
+  );
+  setFormField(
+    els.editRestaurantForm,
+    "dietaryTags",
+    (restaurant.dietaryTags || []).join(", "),
+  );
+  setFormField(
+    els.editRestaurantForm,
+    "description",
+    restaurant.description || "",
+  );
   updateManagedVisibilityControls();
 }
 
 function renderManagedRestaurants() {
-  if (!state.user || (state.user.role !== "owner" && state.user.role !== "moderator")) {
+  if (
+    !state.user ||
+    (state.user.role !== "owner" && state.user.role !== "moderator")
+  ) {
     els.ownerRestaurantsList.innerHTML = "";
     els.editRestaurantSelect.innerHTML = "";
     els.imageRestaurantSelect.innerHTML = "";
@@ -1757,9 +2469,12 @@ function renderManagedRestaurants() {
   if (!state.managedRestaurants.length) {
     els.ownerRestaurantsList.innerHTML =
       '<p class="muted">No managed restaurants yet. Create one to get started.</p>';
-    els.editRestaurantSelect.innerHTML = '<option value="">No restaurants yet</option>';
-    els.imageRestaurantSelect.innerHTML = '<option value="">No restaurants yet</option>';
-    els.menuRestaurantSelect.innerHTML = '<option value="">No restaurants yet</option>';
+    els.editRestaurantSelect.innerHTML =
+      '<option value="">No restaurants yet</option>';
+    els.imageRestaurantSelect.innerHTML =
+      '<option value="">No restaurants yet</option>';
+    els.menuRestaurantSelect.innerHTML =
+      '<option value="">No restaurants yet</option>';
     state.selectedManagedRestaurantId = null;
     updateManagedVisibilityControls();
     return;
@@ -1797,26 +2512,30 @@ function renderManagedRestaurants() {
   els.menuRestaurantSelect.innerHTML = options;
 
   const selectedRestaurantId =
-    state.selectedManagedRestaurantId || state.managedRestaurants[0]?.id || null;
+    state.selectedManagedRestaurantId ||
+    state.managedRestaurants[0]?.id ||
+    null;
   if (selectedRestaurantId) {
     els.imageRestaurantSelect.value = selectedRestaurantId;
     els.menuRestaurantSelect.value = selectedRestaurantId;
     populateEditForm(selectedRestaurantId);
   }
 
-  els.ownerRestaurantsList.querySelectorAll("[data-restaurant-id]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const restaurantId = button.getAttribute("data-restaurant-id");
-      if (!restaurantId) {
-        return;
-      }
+  els.ownerRestaurantsList
+    .querySelectorAll("[data-restaurant-id]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        const restaurantId = button.getAttribute("data-restaurant-id");
+        if (!restaurantId) {
+          return;
+        }
 
-      populateEditForm(restaurantId);
-      els.imageRestaurantSelect.value = restaurantId;
-      els.menuRestaurantSelect.value = restaurantId;
-      renderManagedRestaurants();
+        populateEditForm(restaurantId);
+        els.imageRestaurantSelect.value = restaurantId;
+        els.menuRestaurantSelect.value = restaurantId;
+        renderManagedRestaurants();
+      });
     });
-  });
 
   updateManagedVisibilityControls();
 }
@@ -1827,9 +2546,12 @@ function renderModerationUsers() {
     return;
   }
 
-  const otherUsers = state.moderationUsers.filter((user) => String(user.id) !== String(state.user.id));
+  const otherUsers = state.moderationUsers.filter(
+    (user) => String(user.id) !== String(state.user.id),
+  );
   if (!otherUsers.length) {
-    els.moderatorUsersList.innerHTML = '<p class="muted">No other users to moderate right now.</p>';
+    els.moderatorUsersList.innerHTML =
+      '<p class="muted">No other users to moderate right now.</p>';
     return;
   }
 
@@ -1862,60 +2584,68 @@ function renderModerationUsers() {
     )
     .join("");
 
-  els.moderatorUsersList.querySelectorAll(".toggle-user-ban-btn").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const userId = button.getAttribute("data-user-id");
-      const isBanned = button.getAttribute("data-is-banned") === "true";
-      if (!userId) {
-        return;
-      }
-
-      const reason = isBanned
-        ? ""
-        : window.prompt("Optional reason for suspending this account:", "") || "";
-
-      try {
-        await setModerationUserBan({
-          userId,
-          isBanned: !isBanned,
-          reason,
-        });
-        await refreshManagementData();
-        if (state.selectedRestaurantId) {
-          await loadRestaurantDetails(state.selectedRestaurantId);
+  els.moderatorUsersList
+    .querySelectorAll(".toggle-user-ban-btn")
+    .forEach((button) => {
+      button.addEventListener("click", async () => {
+        const userId = button.getAttribute("data-user-id");
+        const isBanned = button.getAttribute("data-is-banned") === "true";
+        if (!userId) {
+          return;
         }
-        showToast(isBanned ? "User unsuspended." : "User suspended.");
-      } catch (error) {
-        showToast(error.message, true);
-      }
+
+        const reason = isBanned
+          ? ""
+          : window.prompt("Optional reason for suspending this account:", "") ||
+            "";
+
+        try {
+          await setModerationUserBan({
+            userId,
+            isBanned: !isBanned,
+            reason,
+          });
+          await refreshManagementData();
+          if (state.selectedRestaurantId) {
+            await loadRestaurantDetails(state.selectedRestaurantId);
+          }
+          showToast(isBanned ? "User unsuspended." : "User suspended.");
+        } catch (error) {
+          showToast(error.message, true);
+        }
+      });
     });
-  });
 
-  els.moderatorUsersList.querySelectorAll(".delete-user-btn").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const userId = button.getAttribute("data-user-id");
-      if (!userId) {
-        return;
-      }
+  els.moderatorUsersList
+    .querySelectorAll(".delete-user-btn")
+    .forEach((button) => {
+      button.addEventListener("click", async () => {
+        const userId = button.getAttribute("data-user-id");
+        if (!userId) {
+          return;
+        }
 
-      if (!window.confirm("Delete this user and any restaurants they own?")) {
-        return;
-      }
+        if (!window.confirm("Delete this user and any restaurants they own?")) {
+          return;
+        }
 
-      try {
-        await deleteModerationUser(userId);
-        await refreshManagementData();
-        await resetAndReloadRestaurants();
-        showToast("User deleted.");
-      } catch (error) {
-        showToast(error.message, true);
-      }
+        try {
+          await deleteModerationUser(userId);
+          await refreshManagementData();
+          await resetAndReloadRestaurants();
+          showToast("User deleted.");
+        } catch (error) {
+          showToast(error.message, true);
+        }
+      });
     });
-  });
 }
 
 async function refreshManagementData() {
-  if (!state.user || (state.user.role !== "owner" && state.user.role !== "moderator")) {
+  if (
+    !state.user ||
+    (state.user.role !== "owner" && state.user.role !== "moderator")
+  ) {
     state.managedRestaurants = [];
     state.moderationUsers = [];
     renderManagedRestaurants();
@@ -2020,7 +2750,9 @@ function bindEvents() {
         renderModerationUsers();
         renderRestaurantList();
         if (state.selectedRestaurantId) {
-          loadRestaurantDetails(state.selectedRestaurantId).catch((err) => showToast(err.message, true));
+          loadRestaurantDetails(state.selectedRestaurantId).catch((err) =>
+            showToast(err.message, true),
+          );
         }
         showToast("Signed out.");
       })
@@ -2051,7 +2783,9 @@ function bindEvents() {
   });
 
   els.dietaryFilterInputs.forEach((input) => {
-    input.checked = state.dietaryFilters.includes(normalizeDietaryTag(input.value));
+    input.checked = state.dietaryFilters.includes(
+      normalizeDietaryTag(input.value),
+    );
     input.addEventListener("change", () => {
       state.dietaryFilters = els.dietaryFilterInputs
         .filter((item) => item.checked)
@@ -2100,8 +2834,14 @@ function bindEvents() {
 
   els.createRestaurantForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    withLoading("Creating restaurant...", () => buildRestaurantPayload(els.createRestaurantForm))
-      .then((payload) => withLoading("Saving restaurant...", () => createManagedRestaurant(payload)))
+    withLoading("Creating restaurant...", () =>
+      buildRestaurantPayload(els.createRestaurantForm),
+    )
+      .then((payload) =>
+        withLoading("Saving restaurant...", () =>
+          createManagedRestaurant(payload),
+        ),
+      )
       .then(async () => {
         els.createRestaurantForm.reset();
         await refreshManagementData();
@@ -2120,8 +2860,12 @@ function bindEvents() {
 
   els.editRestaurantForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    const restaurantId = String(new FormData(els.editRestaurantForm).get("restaurantId") || "").trim();
-    withLoading("Updating restaurant...", () => buildRestaurantPayload(els.editRestaurantForm))
+    const restaurantId = String(
+      new FormData(els.editRestaurantForm).get("restaurantId") || "",
+    ).trim();
+    withLoading("Updating restaurant...", () =>
+      buildRestaurantPayload(els.editRestaurantForm),
+    )
       .then((payload) =>
         withLoading("Saving restaurant changes...", () =>
           updateManagedRestaurant({
@@ -2142,7 +2886,9 @@ function bindEvents() {
   });
 
   els.deleteRestaurantBtn.addEventListener("click", () => {
-    const restaurantId = String(new FormData(els.editRestaurantForm).get("restaurantId") || "").trim();
+    const restaurantId = String(
+      new FormData(els.editRestaurantForm).get("restaurantId") || "",
+    ).trim();
     if (!restaurantId) {
       showToast("Choose a restaurant first.", true);
       return;
@@ -2152,7 +2898,9 @@ function bindEvents() {
       return;
     }
 
-    withLoading("Deleting restaurant...", () => deleteManagedRestaurant(restaurantId))
+    withLoading("Deleting restaurant...", () =>
+      deleteManagedRestaurant(restaurantId),
+    )
       .then(async () => {
         if (state.selectedRestaurantId === restaurantId) {
           renderDetailsPlaceholder();
@@ -2195,7 +2943,11 @@ function bindEvents() {
           if (state.selectedRestaurantId === restaurant.id) {
             await loadRestaurantDetails(restaurant.id);
           }
-          showToast(isHidden ? "Restaurant is visible again." : "Restaurant hidden from public discovery.");
+          showToast(
+            isHidden
+              ? "Restaurant is visible again."
+              : "Restaurant hidden from public discovery.",
+          );
         })
         .catch((err) => showToast(err.message, true));
     });
@@ -2278,17 +3030,25 @@ async function init() {
             lng: savedSearch.lng,
           };
           state.locationRawLabel = savedSearch.label || "";
-          state.locationLabel = savedSearch.shortLabel || getCompactLocationLabel(savedSearch) || savedSearch.label;
+          state.locationLabel =
+            savedSearch.shortLabel ||
+            getCompactLocationLabel(savedSearch) ||
+            savedSearch.label;
           state.searchRadiusMeters = Math.max(
             DEFAULT_SEARCH_RADIUS_METERS,
             Number(savedSearch.radiusMeters || DEFAULT_SEARCH_RADIUS_METERS),
           );
-          restoredLoadedCount = Math.max(0, Number(savedSearch.loadedCount || 0));
+          restoredLoadedCount = Math.max(
+            0,
+            Number(savedSearch.loadedCount || 0),
+          );
           state.dietaryFilters = Array.isArray(savedSearch.dietaryFilters)
             ? savedSearch.dietaryFilters.map(normalizeDietaryTag)
             : [];
           els.dietaryFilterInputs.forEach((input) => {
-            input.checked = state.dietaryFilters.includes(normalizeDietaryTag(input.value));
+            input.checked = state.dietaryFilters.includes(
+              normalizeDietaryTag(input.value),
+            );
           });
         }
       }
