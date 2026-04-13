@@ -1,10 +1,141 @@
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const PASSWORD_ITERATIONS = 120000;
+const JWT_ISSUER = "nearbytes";
+const JWT_DEFAULT_SECRET = "dev-secret-change-me";
+const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 export const SUPPORTED_ROLES = ["customer", "owner", "moderator"] as const;
 
 function bytesToHex(bytes: Uint8Array) {
   return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function getJwtSecret() {
+  const env = (globalThis as any).process?.env || {};
+  return String(env.JWT_SECRET || JWT_DEFAULT_SECRET);
+}
+
+function bytesToBase64Url(bytes: Uint8Array) {
+  let output = "";
+
+  for (let index = 0; index < bytes.length; index += 3) {
+    const first = bytes[index];
+    const second = index + 1 < bytes.length ? bytes[index + 1] : 0;
+    const third = index + 2 < bytes.length ? bytes[index + 2] : 0;
+    const bits = (first << 16) | (second << 8) | third;
+
+    output += BASE64URL_ALPHABET[(bits >> 18) & 63];
+    output += BASE64URL_ALPHABET[(bits >> 12) & 63];
+    if (index + 1 < bytes.length) {
+      output += BASE64URL_ALPHABET[(bits >> 6) & 63];
+    }
+    if (index + 2 < bytes.length) {
+      output += BASE64URL_ALPHABET[bits & 63];
+    }
+  }
+
+  return output;
+}
+
+function base64UrlToBytes(value: string) {
+  const cleaned = String(value || "").replace(/=+$/, "");
+  const bytes: number[] = [];
+
+  for (let index = 0; index < cleaned.length; index += 4) {
+    const chunk = cleaned.slice(index, index + 4);
+    const values = chunk.split("").map((character) => BASE64URL_ALPHABET.indexOf(character));
+    if (values.some((entry) => entry < 0)) {
+      throw new Error("Invalid base64url payload.");
+    }
+
+    const first = values[0] ?? 0;
+    const second = values[1] ?? 0;
+    const third = values[2] ?? 0;
+    const fourth = values[3] ?? 0;
+    const bits = (first << 18) | (second << 12) | (third << 6) | fourth;
+
+    bytes.push((bits >> 16) & 255);
+    if (chunk.length > 2) {
+      bytes.push((bits >> 8) & 255);
+    }
+    if (chunk.length > 3) {
+      bytes.push(bits & 255);
+    }
+  }
+
+  return new Uint8Array(bytes);
+}
+
+function encodeJwtPart(value: Record<string, any>) {
+  return bytesToBase64Url(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+function decodeJwtPart(value: string) {
+  return JSON.parse(new TextDecoder().decode(base64UrlToBytes(value)));
+}
+
+function constantTimeEqual(left: string, right: string) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+
+  return difference === 0;
+}
+
+async function signJwt(unsignedToken: string) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(getJwtSecret()),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(unsignedToken));
+  return bytesToBase64Url(new Uint8Array(signature));
+}
+
+async function issueSessionJwt(userId: any, sessionId: string, expiresAt: string) {
+  const expiresAtMs = new Date(expiresAt).getTime();
+  const header = encodeJwtPart({ alg: "HS256", typ: "JWT" });
+  const payload = encodeJwtPart({
+    iss: JWT_ISSUER,
+    sub: String(userId),
+    sid: sessionId,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(expiresAtMs / 1000),
+  });
+  const unsignedToken = `${header}.${payload}`;
+  const signature = await signJwt(unsignedToken);
+
+  return `${unsignedToken}.${signature}`;
+}
+
+async function verifySessionJwt(sessionToken: string) {
+  const parts = String(sessionToken || "").split(".");
+  if (parts.length !== 3) {
+    return false;
+  }
+
+  try {
+    const payload = decodeJwtPart(parts[1]);
+    const expiresAtSeconds = Number(payload?.exp || 0);
+    if (payload?.iss !== JWT_ISSUER || !Number.isFinite(expiresAtSeconds)) {
+      return false;
+    }
+    if (expiresAtSeconds * 1000 <= Date.now()) {
+      return false;
+    }
+
+    const expectedSignature = await signJwt(`${parts[0]}.${parts[1]}`);
+    return constantTimeEqual(expectedSignature, parts[2]);
+  } catch (_error) {
+    return false;
+  }
 }
 
 function normalizeWhitespace(value: string) {
@@ -191,13 +322,15 @@ export async function issueSession(ctx: any, userId: any) {
     await ctx.db.delete(session._id);
   }
 
-  const sessionToken = generateRandomHex(32);
+  const sessionId = generateRandomHex(16);
+  const expiresAt = sessionExpiryIso();
+  const sessionToken = await issueSessionJwt(userId, sessionId, expiresAt);
   const tokenHash = await sha256Hex(sessionToken);
   await ctx.db.insert("sessions", {
     userId,
     tokenHash,
     createdAt: nowIso(),
-    expiresAt: sessionExpiryIso(),
+    expiresAt,
   });
 
   return sessionToken;
@@ -206,6 +339,10 @@ export async function issueSession(ctx: any, userId: any) {
 export async function resolveSession(ctx: any, sessionToken: string | undefined | null) {
   const trimmed = String(sessionToken || "").trim();
   if (!trimmed) {
+    return null;
+  }
+
+  if (!(await verifySessionJwt(trimmed))) {
     return null;
   }
 

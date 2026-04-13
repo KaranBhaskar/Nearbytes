@@ -64,6 +64,48 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ── PROGRESS BAR ────────────────────────────────────────── */
+#progress-bar-track {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 9999;
+  background: transparent;
+  pointer-events: none;
+}
+
+#progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--primary), var(--accent));
+  transition: width 0.3s ease, opacity 0.4s ease;
+  opacity: 0;
+  border-radius: 0 2px 2px 0;
+  box-shadow: 0 0 8px rgba(var(--primary-rgb), 0.6);
+}
+
+#progress-bar.active {
+  opacity: 1;
+}
+
+#progress-bar.filling {
+  transition: width 8s cubic-bezier(0.1, 0.6, 0.5, 1);
+}
+
+#progress-bar.done {
+  width: 100% !important;
+  transition: width 0.2s ease;
+  opacity: 0;
+  animation: progress-done-hide 0.5s ease 0.2s forwards;
+}
+
+@keyframes progress-done-hide {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 h1, h2, h3 {
   margin: 0 0 8px 0;
   font-weight: 700;

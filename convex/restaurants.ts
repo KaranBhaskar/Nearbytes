@@ -121,6 +121,10 @@ export const listNearby = queryGeneric({
           return false;
         }
 
+        if (restaurant.source === "google") {
+          return false;
+        }
+
         if (restaurant.distanceKm > radiusKm) {
           return false;
         }

@@ -106,13 +106,21 @@ export const GOOGLE_TARGET_RESULTS = 60;
 export const GOOGLE_MAX_RADIUS_METERS = 15000;
 export const GOOGLE_MAX_SEARCH_CELLS = 9;
 export const GEMINI_MODEL = String(process.env.GEMINI_MODEL || "gemini-2.5-flash-lite").trim();
+export const OSM_MIN_RESULTS = GOOGLE_MIN_RESULTS;
+export const OSM_TARGET_RESULTS = GOOGLE_TARGET_RESULTS;
+export const OSM_MAX_RADIUS_METERS = 30000;
 
 function bucketCoordinate(value: number, step: number) {
   return Number((Math.round(value / step) * step).toFixed(4));
 }
 
 export function getNearbyRadiusMeters() {
-  const parsed = Number(process.env.GOOGLE_NEARBY_RADIUS_METERS || DEFAULT_RADIUS_METERS);
+  const parsed = Number(
+    process.env.NEARBY_RADIUS_METERS ||
+      process.env.OSM_NEARBY_RADIUS_METERS ||
+      process.env.GOOGLE_NEARBY_RADIUS_METERS ||
+      DEFAULT_RADIUS_METERS,
+  );
   return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 50000) : DEFAULT_RADIUS_METERS;
 }
 

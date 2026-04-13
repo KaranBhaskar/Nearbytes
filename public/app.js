@@ -17,7 +17,7 @@ import {
   reverseGeocodeLocation,
   saveSearchState,
   restoreSession,
-  searchGoogleLocation,
+  searchMapLocation,
   setFavoriteRestaurant,
   setManagedRestaurantVisibility,
   setModerationUserBan,
@@ -115,13 +115,36 @@ let observer;
 let locationMap = null;
 let locationMarker = null;
 let locationRestaurantMarkers = [];
-let googleMapsPromise = null;
 let favorites = loadStoredJson("favorites", []);
 const loadingMessages = new Set();
 const geminiTaggedRestaurantIds = new Set();
 const geminiTaggingRestaurantIds = new Set();
 let geminiRefreshQueued = false;
 let geminiRefreshInFlight = false;
+let progressBarActiveCount = 0;
+
+// ─── Progress bar ─────────────────────────────────────────────────────────────
+const progressBarEl = document.getElementById("progress-bar");
+
+function progressBarStart() {
+  progressBarActiveCount++;
+  if (!progressBarEl) return;
+  progressBarEl.classList.remove("done");
+  progressBarEl.classList.add("active", "filling");
+  progressBarEl.style.width = "70%";
+}
+
+function progressBarDone() {
+  progressBarActiveCount = Math.max(0, progressBarActiveCount - 1);
+  if (progressBarActiveCount > 0 || !progressBarEl) return;
+  progressBarEl.classList.remove("filling");
+  progressBarEl.classList.add("done");
+  progressBarEl.style.width = "100%";
+  window.setTimeout(() => {
+    progressBarEl.classList.remove("active", "done");
+    progressBarEl.style.width = "0%";
+  }, 600);
+}
 
 function loadStoredJson(key, fallback) {
   try {
@@ -143,10 +166,6 @@ function getRuntimeConfig() {
 function getNearbyRadiusMeters() {
   const parsed = Number(getRuntimeConfig().nearbyRadiusMeters || 3000);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 3000;
-}
-
-function hasGoogleMapsBrowserKey() {
-  return Boolean(String(getRuntimeConfig().googleMapsBrowserKey || "").trim());
 }
 
 function persistDiscoveryState() {
@@ -279,10 +298,12 @@ function hideLoadingToast(message) {
 
 async function withLoading(message, work) {
   showLoadingToast(message);
+  progressBarStart();
   try {
     return await work();
   } finally {
     hideLoadingToast(message);
+    progressBarDone();
   }
 }
 
@@ -390,53 +411,31 @@ function renderLocationMapMessage(message, isError = false) {
   `;
 }
 
-async function loadGoogleMaps() {
-  if (window.google?.maps) {
-    return window.google.maps;
-  }
+function hasGoogleMaps() {
+  const cfg = getRuntimeConfig();
+  return Boolean(cfg.googleMapsApiKey) && Boolean(window.google?.maps?.Map);
+}
 
-  if (!hasGoogleMapsBrowserKey()) {
-    throw new Error("Add a Google Maps browser key to render the map widget.");
-  }
+async function waitForGoogleMaps(timeoutMs = 5000) {
+  if (window.google?.maps?.Map) return true;
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const check = () => {
+      if (window.google?.maps?.Map) { resolve(true); return; }
+      if (Date.now() - start > timeoutMs) { resolve(false); return; }
+      setTimeout(check, 100);
+    };
+    check();
+  });
+}
 
-  if (!googleMapsPromise) {
-    googleMapsPromise = new Promise((resolve, reject) => {
-      const existing = document.getElementById("google-maps-script");
-      if (existing) {
-        existing.addEventListener("load", () => resolve(window.google.maps), { once: true });
-        existing.addEventListener("error", () => reject(new Error("Google Maps failed to load.")), {
-          once: true,
-        });
-        return;
-      }
-
-      const script = document.createElement("script");
-      script.id = "google-maps-script";
-      script.async = true;
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(
-        getRuntimeConfig().googleMapsBrowserKey,
-      )}&v=weekly`;
-      script.addEventListener("load", () => {
-        if (window.google?.maps) {
-          resolve(window.google.maps);
-          return;
-        }
-
-        reject(new Error("Google Maps failed to initialize."));
-      });
-      script.addEventListener("error", () => reject(new Error("Google Maps failed to load.")));
-      document.head.appendChild(script);
-    }).catch((error) => {
-      googleMapsPromise = null;
-      throw error;
-    });
-  }
-
-  return googleMapsPromise;
+async function loadLeafletMaps() {
+  if (window.L?.map) return window.L;
+  throw new Error("OpenStreetMap map library failed to load.");
 }
 
 function clearLocationRestaurantMarkers() {
-  locationRestaurantMarkers.forEach((marker) => marker.setMap(null));
+  locationRestaurantMarkers.forEach((marker) => marker.remove());
   locationRestaurantMarkers = [];
 }
 
@@ -648,7 +647,11 @@ async function runBackgroundTagRefresh() {
   }
 
   const candidates = state.restaurants
-    .filter((restaurant) => restaurant.source === "google")
+    .filter((restaurant) => {
+      // In local mode enrich everything; in Convex mode only Google-sourced items
+      const cfg = getRuntimeConfig();
+      return cfg.convexUrl ? restaurant.source === "google" : true;
+    })
     .map((restaurant) => String(restaurant.id))
     .filter(
       (restaurantId) =>
@@ -1089,7 +1092,7 @@ async function loadRestaurantDetails(restaurantId) {
       }
       ${
         mapsUrl
-          ? `<p><strong>Google Maps:</strong> <a href="${escapeHtml(
+          ? `<p><strong>OpenStreetMap:</strong> <a href="${escapeHtml(
               mapsUrl,
             )}" target="_blank" rel="noreferrer">Open location</a></p>`
           : ""
@@ -1269,8 +1272,8 @@ function closeLocationModal() {
 }
 
 function openAuthModal() {
-  if (getRestaurantDataMode() !== "convex") {
-    showToast("Auth requires the Convex backend to be configured.", true);
+  if (getRestaurantDataMode() === "unconfigured") {
+    showToast("Auth requires a backend to be configured.", true);
     return;
   }
 
@@ -1287,28 +1290,20 @@ function setPendingMapLocation(lat, lng, label = null, shortLabel = null) {
   state.pendingMapLocation = { lat, lng, label, shortLabel };
   setLocationSearchInputValue(label || shortLabel || "");
 
-  if (!locationMap || !window.google?.maps) {
+  if (!locationMap || !window.L?.marker) {
     return;
   }
 
-  const position = { lat, lng };
-
   if (!locationMarker) {
-    locationMarker = new window.google.maps.Marker({
-      map: locationMap,
-      position,
+    locationMarker = window.L.marker([lat, lng], {
       draggable: true,
       title: "Selected location",
-    });
+    }).addTo(locationMap);
 
-    locationMarker.addListener("dragend", async () => {
-      const markerPosition = locationMarker.getPosition();
-      if (!markerPosition) {
-        return;
-      }
-
-      const nextLat = markerPosition.lat();
-      const nextLng = markerPosition.lng();
+    locationMarker.on("dragend", async () => {
+      const markerPosition = locationMarker.getLatLng();
+      const nextLat = markerPosition.lat;
+      const nextLng = markerPosition.lng;
       state.pendingMapLocation = {
         lat: nextLat,
         lng: nextLng,
@@ -1326,43 +1321,90 @@ function setPendingMapLocation(lat, lng, label = null, shortLabel = null) {
       }
     });
   } else {
-    locationMarker.setPosition(position);
+    locationMarker.setLatLng([lat, lng]);
   }
 
-  locationMap.setCenter(position);
-  locationMap.setZoom(14);
+  locationMap.setView([lat, lng], 14);
   els.mapSelectionStatus.textContent = label
     ? `Selected: ${getCompactLocationLabel({ label, shortLabel })}`
     : `Selected pin at ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
 async function initLocationMap() {
-  const maps = await withLoading("Loading map...", () => loadGoogleMaps());
   const mapElement = document.getElementById("location-map");
-  if (!mapElement) {
-    return;
-  }
-
+  if (!mapElement) return;
   mapElement.innerHTML = "";
 
-  if (!locationMap) {
-    locationMap = new maps.Map(mapElement, {
-      center: { lat: DEFAULT_MAP_VIEW.lat, lng: DEFAULT_MAP_VIEW.lng },
-      zoom: 12,
-      mapTypeControl: false,
-      streetViewControl: false,
-      fullscreenControl: false,
-    });
+  // ── Try Google Maps first if key is present ───────────────────────────────
+  const cfg = getRuntimeConfig();
+  if (cfg.googleMapsApiKey) {
+    const ready = await withLoading("Loading map...", () => waitForGoogleMaps(5000));
+    if (ready) {
+      if (!locationMap) {
+        const center = {
+          lat: state.pendingMapLocation?.lat ?? state.location?.lat ?? DEFAULT_MAP_VIEW.lat,
+          lng: state.pendingMapLocation?.lng ?? state.location?.lng ?? DEFAULT_MAP_VIEW.lng,
+        };
+        locationMap = new window.google.maps.Map(mapElement, {
+          center,
+          zoom: 13,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
+        });
 
-    locationMap.addListener("click", async (event) => {
-      const lat = event.latLng?.lat();
-      const lng = event.latLng?.lng();
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-        return;
+        locationMap.addListener("click", async (event) => {
+          const lat = event.latLng.lat();
+          const lng = event.latLng.lng();
+          setPendingMapLocation(lat, lng);
+          try {
+            const location = await reverseGeocodeLocation(lat, lng);
+            state.pendingMapLocation.label = location.label;
+            state.pendingMapLocation.shortLabel = location.shortLabel || null;
+            els.mapSelectionStatus.textContent = `Selected: ${getCompactLocationLabel(location)}`;
+          } catch (_err) {
+            els.mapSelectionStatus.textContent = `Selected pin at ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          }
+        });
+      } else {
+        // Recenter on re-open
+        const center = {
+          lat: state.pendingMapLocation?.lat ?? state.location?.lat ?? DEFAULT_MAP_VIEW.lat,
+          lng: state.pendingMapLocation?.lng ?? state.location?.lng ?? DEFAULT_MAP_VIEW.lng,
+        };
+        locationMap.setCenter(center);
       }
 
-      setPendingMapLocation(lat, lng);
+      if (state.location) {
+        setPendingMapLocation(
+          state.location.lat, state.location.lng,
+          state.locationRawLabel || state.locationLabel, state.locationLabel
+        );
+      } else {
+        state.pendingMapLocation = null;
+        setLocationSearchInputValue("");
+        els.mapSelectionStatus.textContent = "Use your current location, search a city, or click the map to drop a pin.";
+      }
+      return;
+    }
+    // Google Maps failed to load — fall through to Leaflet
+  }
 
+  // ── Leaflet / OpenStreetMap fallback ─────────────────────────────────────
+  const L = await withLoading("Loading map...", () => loadLeafletMaps());
+
+  if (!locationMap) {
+    locationMap = L.map(mapElement).setView([DEFAULT_MAP_VIEW.lat, DEFAULT_MAP_VIEW.lng], 12);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors",
+      maxZoom: 19,
+    }).addTo(locationMap);
+
+    locationMap.on("click", async (event) => {
+      const lat = event.latlng?.lat;
+      const lng = event.latlng?.lng;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      setPendingMapLocation(lat, lng);
       try {
         const location = await reverseGeocodeLocation(lat, lng);
         state.pendingMapLocation.label = location.label;
@@ -1375,32 +1417,24 @@ async function initLocationMap() {
   }
 
   window.setTimeout(() => {
-    if (locationMap) {
-      google.maps.event.trigger(locationMap, "resize");
-      locationMap.setCenter({
-        lat: state.pendingMapLocation?.lat ?? state.location?.lat ?? DEFAULT_MAP_VIEW.lat,
-        lng: state.pendingMapLocation?.lng ?? state.location?.lng ?? DEFAULT_MAP_VIEW.lng,
-      });
+    if (locationMap && locationMap.invalidateSize) {
+      locationMap.invalidateSize();
+      locationMap.setView(
+        [state.pendingMapLocation?.lat ?? state.location?.lat ?? DEFAULT_MAP_VIEW.lat,
+         state.pendingMapLocation?.lng ?? state.location?.lng ?? DEFAULT_MAP_VIEW.lng],
+        locationMap.getZoom()
+      );
     }
   }, 100);
 
   if (state.location) {
-    setPendingMapLocation(
-      state.location.lat,
-      state.location.lng,
-      state.locationRawLabel || state.locationLabel,
-      state.locationLabel,
-    );
+    setPendingMapLocation(state.location.lat, state.location.lng, state.locationRawLabel || state.locationLabel, state.locationLabel);
   } else {
     state.pendingMapLocation = null;
     setLocationSearchInputValue("");
     clearLocationRestaurantMarkers();
-    if (locationMarker) {
-      locationMarker.setMap(null);
-      locationMarker = null;
-    }
-    els.mapSelectionStatus.textContent =
-      "Use your current location, search a city, or click the map to drop a pin.";
+    if (locationMarker) { locationMarker.remove(); locationMarker = null; }
+    els.mapSelectionStatus.textContent = "Use your current location, search a city, or click the map to drop a pin.";
   }
 
   renderLocationRestaurantMarkers();
@@ -1480,7 +1514,7 @@ async function searchLocationInModal() {
   try {
     els.mapSelectionStatus.textContent = "Searching location...";
     const location = await withLoading("Searching for that location...", () =>
-      searchGoogleLocation(query),
+      searchMapLocation(query),
     );
     setPendingMapLocation(location.lat, location.lng, location.label, location.shortLabel || null);
   } catch (err) {
@@ -1650,7 +1684,7 @@ async function buildRestaurantPayload(form) {
   let verifiedLocation = null;
 
   try {
-    verifiedLocation = await searchGoogleLocation(address);
+    verifiedLocation = await searchMapLocation(address);
   } catch (_error) {
     verifiedLocation = null;
   }

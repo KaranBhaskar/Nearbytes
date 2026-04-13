@@ -3,86 +3,85 @@
 import { action } from "./_generated/server";
 import { v } from "convex/values";
 
-const GEOCODE_ENDPOINT = "https://maps.googleapis.com/maps/api/geocode/json";
+const NOMINATIM_SEARCH_ENDPOINT = "https://nominatim.openstreetmap.org/search";
+const NOMINATIM_REVERSE_ENDPOINT = "https://nominatim.openstreetmap.org/reverse";
+const APP_USER_AGENT = "Nearbytes/1.0 (OpenStreetMap location lookup)";
 
-type AddressComponent = {
-  long_name?: string;
-  short_name?: string;
-  types?: string[];
+type NominatimAddress = {
+  city?: string;
+  town?: string;
+  village?: string;
+  municipality?: string;
+  county?: string;
+  state?: string;
+  road?: string;
+  house_number?: string;
+  postcode?: string;
 };
 
-type GeocodeResult = {
-  formatted_address?: string;
-  place_id?: string;
-  address_components?: AddressComponent[];
-  geometry?: {
-    location?: {
-      lat?: number;
-      lng?: number;
-    };
-  };
+type NominatimResult = {
+  lat?: string;
+  lon?: string;
+  display_name?: string;
+  osm_type?: string;
+  osm_id?: number | string;
+  place_id?: number | string;
+  address?: NominatimAddress;
 };
-
-function getApiKey() {
-  return String(
-    process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY || "",
-  ).trim();
-}
 
 async function fetchJson(url: URL) {
-  const response = await fetch(url.toString());
+  const response = await fetch(url.toString(), {
+    headers: {
+      Accept: "application/json",
+      "Accept-Language": "en",
+      "User-Agent": APP_USER_AGENT,
+    },
+  });
+
   if (!response.ok) {
-    throw new Error(`Google Maps request failed with status ${response.status}.`);
+    throw new Error(`OpenStreetMap lookup failed with status ${response.status}.`);
   }
 
-  const payload = await response.json();
-  if (payload?.status && payload.status !== "OK" && payload.status !== "ZERO_RESULTS") {
-    throw new Error(payload.error_message || `Google Maps error: ${payload.status}`);
-  }
-
-  return payload;
+  return response.json();
 }
 
-function firstAddressSegment(address?: string) {
-  return String(address || "")
+function firstAddressSegment(label?: string) {
+  return String(label || "")
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean)[0] || null;
 }
 
-function findAddressComponent(
-  result: GeocodeResult | null | undefined,
-  candidateTypes: string[],
-) {
-  const components = Array.isArray(result?.address_components) ? result.address_components : [];
-  return (
-    components.find((component) =>
-      candidateTypes.some((candidateType) => component?.types?.includes(candidateType)),
-    ) || null
-  );
-}
+function extractShortLabel(result: NominatimResult | null | undefined) {
+  const address = result?.address || {};
+  const cityLabel =
+    address.city ||
+    address.town ||
+    address.village ||
+    address.municipality ||
+    address.county ||
+    address.state;
 
-function extractShortLabel(result: GeocodeResult | null | undefined) {
-  const cityComponent =
-    findAddressComponent(result, ["locality", "postal_town"]) ||
-    findAddressComponent(result, ["sublocality_level_1", "sublocality"]) ||
-    findAddressComponent(result, ["administrative_area_level_2"]) ||
-    findAddressComponent(result, ["neighborhood"]) ||
-    findAddressComponent(result, ["administrative_area_level_1"]);
-
-  const cityLabel = String(cityComponent?.long_name || cityComponent?.short_name || "").trim();
   if (cityLabel) {
-    return cityLabel;
+    return String(cityLabel).trim();
   }
 
-  const route = findAddressComponent(result, ["route"]);
-  const streetNumber = findAddressComponent(result, ["street_number"]);
-  const streetLabel = [streetNumber?.long_name, route?.long_name].filter(Boolean).join(" ").trim();
+  const streetLabel = [address.house_number, address.road].filter(Boolean).join(" ").trim();
   if (streetLabel) {
     return streetLabel;
   }
 
-  return firstAddressSegment(result?.formatted_address) || null;
+  return firstAddressSegment(result?.display_name) || null;
+}
+
+function extractPlaceId(result: NominatimResult | null | undefined) {
+  const osmType = String(result?.osm_type || "").trim();
+  const osmId = String(result?.osm_id || "").trim();
+  if (osmType && osmId) {
+    return `osm:${osmType}:${osmId}`;
+  }
+
+  return String(result?.place_id || "");
 }
 
 export const geocodeSearch = action({
@@ -90,32 +89,31 @@ export const geocodeSearch = action({
     query: v.string(),
   },
   handler: async (_ctx, args) => {
-    const apiKey = getApiKey();
-    if (!apiKey) {
-      throw new Error("Missing GOOGLE_MAPS_API_KEY for location search.");
-    }
-
     const query = String(args.query || "").trim();
     if (!query) {
       throw new Error("Enter a location to search.");
     }
 
-    const url = new URL(GEOCODE_ENDPOINT);
-    url.searchParams.set("address", query);
-    url.searchParams.set("key", apiKey);
+    const url = new URL(NOMINATIM_SEARCH_ENDPOINT);
+    url.searchParams.set("q", query);
+    url.searchParams.set("format", "jsonv2");
+    url.searchParams.set("limit", "1");
+    url.searchParams.set("addressdetails", "1");
 
     const payload = await fetchJson(url);
-    const result = (Array.isArray(payload?.results) ? payload.results[0] : null) as GeocodeResult | null;
-    if (!result?.geometry?.location) {
+    const result = (Array.isArray(payload) ? payload[0] : null) as NominatimResult | null;
+    const lat = Number(result?.lat);
+    const lng = Number(result?.lon);
+    if (!result || !Number.isFinite(lat) || !Number.isFinite(lng)) {
       throw new Error("Location not found.");
     }
 
     return {
-      lat: Number(result.geometry.location.lat),
-      lng: Number(result.geometry.location.lng),
-      label: String(result.formatted_address || query),
+      lat,
+      lng,
+      label: String(result.display_name || query),
       shortLabel: extractShortLabel(result),
-      placeId: String(result.place_id || ""),
+      placeId: extractPlaceId(result),
     };
   },
 });
@@ -126,25 +124,22 @@ export const reverseGeocode = action({
     lng: v.number(),
   },
   handler: async (_ctx, args) => {
-    const apiKey = getApiKey();
-    if (!apiKey) {
-      throw new Error("Missing GOOGLE_MAPS_API_KEY for reverse geocoding.");
-    }
+    const url = new URL(NOMINATIM_REVERSE_ENDPOINT);
+    url.searchParams.set("lat", String(args.lat));
+    url.searchParams.set("lon", String(args.lng));
+    url.searchParams.set("format", "jsonv2");
+    url.searchParams.set("addressdetails", "1");
 
-    const url = new URL(GEOCODE_ENDPOINT);
-    url.searchParams.set("latlng", `${args.lat},${args.lng}`);
-    url.searchParams.set("key", apiKey);
-
-    const payload = await fetchJson(url);
-    const result = (Array.isArray(payload?.results) ? payload.results[0] : null) as GeocodeResult | null;
-    if (!result?.formatted_address) {
+    const result = (await fetchJson(url)) as NominatimResult;
+    const label = String(result?.display_name || "").trim();
+    if (!label) {
       throw new Error("Unable to resolve that location.");
     }
 
     return {
-      label: String(result.formatted_address),
+      label,
       shortLabel: extractShortLabel(result),
-      placeId: String(result.place_id || ""),
+      placeId: extractPlaceId(result),
     };
   },
 });

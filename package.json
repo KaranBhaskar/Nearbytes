@@ -1,22 +1,28 @@
 {
-  "name": "restaurant-nearby-prototype",
+  "name": "nearbytes",
   "version": "1.0.0",
-  "description": "Location-based restaurant discovery prototype with a Convex backend",
-  "main": "scripts/dev-static.js",
+  "description": "Full-stack restaurant discovery app with Convex cloud backend and local SQLite fallback",
+  "main": "server/index.js",
   "type": "commonjs",
   "engines": {
-    "node": "^20 || ^22"
+    "node": ">=20"
   },
   "scripts": {
-    "build": "node scripts/build-static.js",
+    "start": "node server/index.js",
     "dev": "node scripts/dev.js",
     "dev:static": "node scripts/dev-static.js",
+    "build": "node scripts/build-static.js",
+    "seed": "node server/seed.js",
     "convex:dev": "npx convex dev --typecheck disable",
-    "convex:codegen": "npx convex codegen",
-    "test": "node -e \"console.log('No automated tests configured yet.')\""
+    "convex:deploy": "npx convex deploy"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.8.1",
     "convex": "^1.34.1",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1"
   }
 }

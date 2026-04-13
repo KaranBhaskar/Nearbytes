@@ -4,556 +4,255 @@ import { v } from "convex/values";
 import { action } from "./_generated/server";
 import { internal } from "./_generated/api";
 import {
-  GOOGLE_MAX_SEARCH_CELLS,
-  GOOGLE_MAX_RADIUS_METERS,
-  GEMINI_MODEL,
-  GOOGLE_MAX_RESULTS,
-  GOOGLE_MIN_RESULTS,
-  GOOGLE_TARGET_RESULTS,
   buildNearbyCacheKey,
-  extractCuisineTags,
-  extractDietaryTags,
-  extractDisplayText,
-  extractOpeningHours,
   getNearbyRadiusMeters,
   isCacheFresh,
-  sanitizeMenuItems,
-  shouldUseGemini,
+  OSM_MAX_RADIUS_METERS,
+  OSM_MIN_RESULTS,
+  OSM_TARGET_RESULTS,
 } from "./googleHelpers";
 import { normalizeHttpUrl, normalizeOptionalString, nowIso } from "./authHelpers";
+import { normalizeTag } from "./restaurantHelpers";
 
-const GOOGLE_PLACES_ENDPOINT = "https://places.googleapis.com/v1/places:searchNearby";
-const GOOGLE_PLACE_PHOTO_ENDPOINT = "https://places.googleapis.com/v1";
-const GOOGLE_FIELD_MASK = [
-  "places.id",
-  "places.displayName",
-  "places.formattedAddress",
-  "places.location",
-  "places.rating",
-  "places.userRatingCount",
-  "places.nationalPhoneNumber",
-  "places.websiteUri",
-  "places.regularOpeningHours",
-  "places.photos",
-  "places.primaryType",
-  "places.primaryTypeDisplayName",
-  "places.types",
-  "places.editorialSummary",
-  "places.servesVegetarianFood",
-  "places.delivery",
-  "places.takeout",
-  "places.dineIn",
-].join(",");
+const OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
+const APP_USER_AGENT = "Nearbytes/1.0 (OpenStreetMap restaurant lookup)";
 
-const GEMINI_RESPONSE_SCHEMA = {
-  type: "object",
-  properties: {
-    restaurants: {
-      type: "array",
-      description:
-        "Gemini enrichment keyed by Google Place ID. Use empty arrays when the evidence is weak.",
-      items: {
-        type: "object",
-        properties: {
-          placeId: {
-            type: "string",
-            description: "The Google Place ID from the input list.",
-          },
-          cuisineTags: {
-            type: "array",
-            description:
-              "Up to six helpful discovery tags as lowercase slugs such as cafe, coffee, bakery, breakfast, brunch, sandwiches, donuts, vegetarian-friendly, vegan-friendly, dessert, ramen, sushi, quick-bites.",
-            items: {
-              type: "string",
-            },
-          },
-          displayTags: {
-            type: "array",
-            description:
-              "Up to six short, frontend-friendly tag chips in lowercase slug form. Prefer concise labels such as coffee, breakfast, brunch, sushi, vegetarian-friendly, gluten-free-friendly, family-friendly.",
-            items: {
-              type: "string",
-            },
-          },
-          dietaryTags: {
-            type: "array",
-            description:
-              "Only use likely dietary tags from this set: vegan, vegetarian, halal, kosher, gluten-free.",
-            items: {
-              type: "string",
-              enum: ["vegan", "vegetarian", "halal", "kosher", "gluten-free"],
-            },
-          },
-          filterTags: {
-            type: "array",
-            description:
-              "Strict filter tags for the app. Only use likely values from this set: vegan, vegetarian, halal, kosher, gluten-free.",
-            items: {
-              type: "string",
-              enum: ["vegan", "vegetarian", "halal", "kosher", "gluten-free"],
-            },
-          },
-          menuItems: {
-            type: "array",
-            description:
-              "Up to five likely menu items inferred from the place metadata. Use empty arrays if unsure.",
-            items: {
-              type: "object",
-              properties: {
-                name: { type: "string" },
-                description: {
-                  type: ["string", "null"],
-                },
-              },
-              required: ["name", "description"],
-            },
-          },
-        },
-        required: ["placeId", "cuisineTags", "displayTags", "dietaryTags", "filterTags", "menuItems"],
-      },
-    },
-  },
-  required: ["restaurants"],
-};
+function splitTags(value: unknown) {
+  return Array.from(
+    new Set(
+      String(value || "")
+        .split(/[;,]/)
+        .map((entry) => normalizeTag(entry))
+        .filter(Boolean),
+    ),
+  );
+}
 
-function parseJsonResponse(text: string) {
+function hasTruthyDietaryValue(value: unknown) {
+  return ["yes", "only", "limited", "true", "1"].includes(
+    String(value || "").trim().toLowerCase(),
+  );
+}
+
+function safeNormalizeHttpUrl(value: unknown) {
   try {
-    return JSON.parse(text);
+    return normalizeHttpUrl(value);
   } catch (_error) {
     return null;
   }
 }
 
-async function getPhotoUri(photoName: string, apiKey: string) {
-  const photoUrl = new URL(`${GOOGLE_PLACE_PHOTO_ENDPOINT}/${photoName}/media`);
-  photoUrl.searchParams.set("key", apiKey);
-  photoUrl.searchParams.set("maxHeightPx", "900");
-  photoUrl.searchParams.set("skipHttpRedirect", "true");
+function inferOsmCuisineTags(tags: Record<string, any>) {
+  const inferred = new Set<string>(splitTags(tags.cuisine));
+  const amenity = normalizeTag(tags.amenity);
+  const name = String(tags.name || "").toLowerCase();
 
-  const response = await fetch(photoUrl.toString());
-  if (!response.ok) {
-    return null;
+  if (amenity === "cafe") {
+    inferred.add("cafe");
+    inferred.add("coffee");
+  }
+  if (amenity === "fast-food") {
+    inferred.add("fast-food");
+    inferred.add("quick-bites");
+  }
+  if (amenity === "food-court") {
+    inferred.add("food-court");
+    inferred.add("quick-bites");
   }
 
-  const payload = await response.json();
-  return typeof payload?.photoUri === "string" ? payload.photoUri : null;
+  const keywordRules = [
+    { tag: "pizza", patterns: ["pizza"] },
+    { tag: "burgers", patterns: ["burger", "burgers"] },
+    { tag: "coffee", patterns: ["coffee", "espresso", "starbucks", "tim hortons"] },
+    { tag: "donuts", patterns: ["donut", "doughnut", "tim hortons"] },
+    { tag: "sandwiches", patterns: ["sandwich", "subway", "subs"] },
+    { tag: "shawarma", patterns: ["shawarma", "osmow", "kebab"] },
+    { tag: "sushi", patterns: ["sushi"] },
+    { tag: "ramen", patterns: ["ramen"] },
+    { tag: "bakery", patterns: ["bakery", "bake"] },
+  ];
+
+  for (const rule of keywordRules) {
+    if (rule.patterns.some((pattern) => name.includes(pattern))) {
+      inferred.add(rule.tag);
+    }
+  }
+
+  return Array.from(inferred);
 }
 
-async function fetchGooglePlaces({
-  apiKey,
-  lat,
-  lng,
-  radiusMeters,
-}: {
-  apiKey: string;
-  lat: number;
-  lng: number;
-  radiusMeters: number;
-}) {
-  const response = await fetch(GOOGLE_PLACES_ENDPOINT, {
+function inferOsmDietaryTags(tags: Record<string, any>) {
+  const dietaryTags = new Set<string>();
+  const searchableText = Object.values(tags).filter(Boolean).join(" ").toLowerCase();
+  const cuisineText = String(tags.cuisine || "").toLowerCase();
+  const nameText = String(tags.name || "").toLowerCase();
+  const combinedText = `${nameText} ${cuisineText} ${searchableText}`;
+
+  if (hasTruthyDietaryValue(tags["diet:vegan"]) || combinedText.includes("vegan")) {
+    dietaryTags.add("vegan");
+  }
+  if (
+    hasTruthyDietaryValue(tags["diet:vegetarian"]) ||
+    combinedText.includes("vegetarian")
+  ) {
+    dietaryTags.add("vegetarian");
+  }
+  if (hasTruthyDietaryValue(tags["diet:halal"]) || combinedText.includes("halal")) {
+    dietaryTags.add("halal");
+  }
+  if (hasTruthyDietaryValue(tags["diet:kosher"]) || combinedText.includes("kosher")) {
+    dietaryTags.add("kosher");
+  }
+  if (
+    hasTruthyDietaryValue(tags["diet:gluten_free"]) ||
+    hasTruthyDietaryValue(tags["diet:gluten-free"]) ||
+    combinedText.includes("gluten free") ||
+    combinedText.includes("gluten-free")
+  ) {
+    dietaryTags.add("gluten-free");
+  }
+
+  if (
+    combinedText.includes("salad") ||
+    combinedText.includes("veggie") ||
+    combinedText.includes("plant-based") ||
+    combinedText.includes("indian") ||
+    combinedText.includes("mediterranean") ||
+    combinedText.includes("middle eastern") ||
+    combinedText.includes("falafel")
+  ) {
+    dietaryTags.add("vegetarian");
+  }
+  if (
+    combinedText.includes("shawarma") ||
+    combinedText.includes("kebab") ||
+    combinedText.includes("gyro")
+  ) {
+    dietaryTags.add("halal");
+  }
+  if (dietaryTags.has("vegan")) {
+    dietaryTags.add("vegetarian");
+  }
+
+  return Array.from(dietaryTags);
+}
+
+function buildOsmAddress(tags: Record<string, any>) {
+  const city = tags["addr:city"] || tags["addr:town"] || tags["addr:village"];
+  const parts = [
+    tags["addr:housenumber"],
+    tags["addr:street"],
+    city,
+    tags["addr:state"],
+    tags["addr:postcode"],
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+,/g, ",")
+    .trim();
+
+  return parts || tags["addr:full"] || city || "Address unavailable";
+}
+
+function getOsmElementLatLng(element: any) {
+  return {
+    lat: Number(element?.lat ?? element?.center?.lat),
+    lng: Number(element?.lon ?? element?.center?.lon),
+  };
+}
+
+async function fetchOverpassRestaurants(lat: number, lng: number, radiusMeters: number) {
+  const query = `
+[out:json][timeout:25];
+(
+  node["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:${Math.round(radiusMeters)},${lat},${lng});
+  way["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:${Math.round(radiusMeters)},${lat},${lng});
+  relation["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:${Math.round(radiusMeters)},${lat},${lng});
+);
+out center tags;
+`;
+
+  const response = await fetch(OVERPASS_ENDPOINT, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": apiKey,
-      "X-Goog-FieldMask": GOOGLE_FIELD_MASK,
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      "User-Agent": APP_USER_AGENT,
     },
-    body: JSON.stringify({
-      includedTypes: ["restaurant"],
-      maxResultCount: GOOGLE_MAX_RESULTS,
-      locationRestriction: {
-        circle: {
-          center: {
-            latitude: lat,
-            longitude: lng,
-          },
-          radius: radiusMeters,
-        },
-      },
-      rankPreference: "POPULARITY",
-      languageCode: "en",
-    }),
+    body: new URLSearchParams({ data: query }),
   });
 
   if (!response.ok) {
     const payload = await response.text();
-    throw new Error(`Google Places sync failed: ${payload || response.status}`);
+    throw new Error(`OpenStreetMap restaurant sync failed: ${payload || response.status}`);
   }
 
   const payload = await response.json();
-  return Array.isArray(payload?.places) ? payload.places : [];
+  return Array.isArray(payload?.elements) ? payload.elements : [];
 }
 
-async function fetchExpandedNearbyPlaces({
-  apiKey,
-  lat,
-  lng,
-  radiusMeters,
-}: {
-  apiKey: string;
-  lat: number;
-  lng: number;
-  radiusMeters: number;
-}) {
+async function fetchExpandedOsmRestaurants(lat: number, lng: number, radiusMeters: number) {
   let effectiveRadius = Math.max(1000, Math.round(radiusMeters));
-  const uniquePlaces = new Map<string, any>();
-  const searchedCenters = new Set<string>();
+  const uniqueElements = new Map<string, any>();
 
-  const upsertPlaces = (places: any[]) => {
-    for (const place of places) {
-      const placeId = String(place?.id || "").trim();
-      if (placeId && !uniquePlaces.has(placeId)) {
-        uniquePlaces.set(placeId, place);
+  while (effectiveRadius <= OSM_MAX_RADIUS_METERS) {
+    const elements = await fetchOverpassRestaurants(lat, lng, effectiveRadius);
+    for (const element of elements) {
+      const key = `${element?.type}:${element?.id}`;
+      if (element?.id != null && !uniqueElements.has(key)) {
+        uniqueElements.set(key, element);
       }
     }
-  };
 
-  const fetchAtCenter = async (centerLat: number, centerLng: number, nextRadiusMeters: number) => {
-    const centerKey = `${centerLat.toFixed(4)}:${centerLng.toFixed(4)}:${Math.round(nextRadiusMeters)}`;
-    if (searchedCenters.has(centerKey) || searchedCenters.size >= GOOGLE_MAX_SEARCH_CELLS) {
-      return;
+    if (uniqueElements.size >= OSM_MIN_RESULTS || effectiveRadius >= OSM_MAX_RADIUS_METERS) {
+      break;
     }
 
-    searchedCenters.add(centerKey);
-    const places = await fetchGooglePlaces({
-      apiKey,
-      lat: centerLat,
-      lng: centerLng,
-      radiusMeters: nextRadiusMeters,
-    });
-    upsertPlaces(places);
-  };
-
-  await fetchAtCenter(lat, lng, effectiveRadius);
-
-  while (uniquePlaces.size < GOOGLE_MIN_RESULTS && effectiveRadius < GOOGLE_MAX_RADIUS_METERS) {
-    effectiveRadius = Math.min(effectiveRadius * 2, GOOGLE_MAX_RADIUS_METERS);
-    await fetchAtCenter(lat, lng, effectiveRadius);
-  }
-
-  if (uniquePlaces.size < GOOGLE_TARGET_RESULTS) {
-    const latStep = (effectiveRadius * 0.6) / 111320;
-    const lngStep =
-      latStep / Math.max(Math.cos((lat * Math.PI) / 180), 0.25);
-    const offsets = [
-      [latStep, 0],
-      [-latStep, 0],
-      [0, lngStep],
-      [0, -lngStep],
-      [latStep, lngStep],
-      [latStep, -lngStep],
-      [-latStep, lngStep],
-      [-latStep, -lngStep],
-    ];
-
-    for (const [latOffset, lngOffset] of offsets) {
-      if (uniquePlaces.size >= GOOGLE_TARGET_RESULTS) {
-        break;
-      }
-
-      await fetchAtCenter(lat + latOffset, lng + lngOffset, effectiveRadius);
-    }
+    effectiveRadius = Math.min(effectiveRadius * 2, OSM_MAX_RADIUS_METERS);
   }
 
   return {
-    places: Array.from(uniquePlaces.values()),
+    elements: Array.from(uniqueElements.values()).slice(0, OSM_TARGET_RESULTS),
     effectiveRadius,
   };
 }
 
-async function fetchGeminiEnrichment(places: any[]) {
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  const candidates = places
-    .filter((place) => shouldUseGemini(place))
-    .slice(0, 15)
-    .map((place) => ({
-      placeId: String(place?.id || ""),
-      name: extractDisplayText(place?.displayName),
-      primaryType: String(place?.primaryType || ""),
-      primaryTypeDisplayName: extractDisplayText(place?.primaryTypeDisplayName),
-      types: Array.isArray(place?.types) ? place.types.slice(0, 8) : [],
-      formattedAddress: String(place?.formattedAddress || ""),
-      websiteUri: String(place?.websiteUri || ""),
-      editorialSummary: extractDisplayText(place?.editorialSummary),
-      servesVegetarianFood: Boolean(place?.servesVegetarianFood),
-      delivery: Boolean(place?.delivery),
-      dineIn: Boolean(place?.dineIn),
-      takeout: Boolean(place?.takeout),
-    }))
-    .filter((place) => place.placeId);
+function normalizeOsmRestaurant(element: any, syncedAt: string) {
+  const tags = element?.tags || {};
+  const name = normalizeOptionalString(tags.name, 120);
+  const { lat, lng } = getOsmElementLatLng(element);
+  const osmType = String(element?.type || "").trim();
+  const osmId = String(element?.id || "").trim();
 
-  if (!apiKey || !candidates.length) {
-    return new Map<
-      string,
-      { cuisineTags: string[]; displayTags: string[]; dietaryTags: string[]; filterTags: string[]; menuItems: any[] }
-    >();
+  if (!name || !Number.isFinite(lat) || !Number.isFinite(lng) || !osmType || !osmId) {
+    return null;
   }
 
-  const prompt = [
-    "You are enriching restaurant records for a food discovery app.",
-    "Use only the provided metadata. If you are unsure, return empty arrays instead of inventing details.",
-    "Infer likely cuisine tags, display tags, strict filter tags, dietary tags, and up to five menu items for each restaurant.",
-    "Cuisine tags should be broad discovery tags, not just cuisines. Good examples include coffee, cafe, bakery, breakfast, brunch, dessert, sandwiches, quick-bites, bubble-tea, noodles, vegetarian-friendly, gluten-free-friendly, and vegan-friendly.",
-    "Display tags should be the cleanest frontend-ready chips to show on cards.",
-    "Filter tags and dietary tags must stay conservative and only use the allowed dietary set when the evidence is reasonably strong.",
-    "Menu items are fallback suggestions only, so do not include prices and do not claim certainty.",
-    JSON.stringify(candidates),
-  ].join("\n\n");
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseJsonSchema: GEMINI_RESPONSE_SCHEMA,
-        },
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    return new Map();
-  }
-
-  const payload = await response.json();
-  const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
-  const parsed = typeof text === "string" ? parseJsonResponse(text) : null;
-  const enrichedRestaurants = Array.isArray(parsed?.restaurants) ? parsed.restaurants : [];
-
-  return new Map(
-    enrichedRestaurants.map((restaurant: any) => [
-      String(restaurant?.placeId || ""),
-      {
-        cuisineTags: Array.isArray(restaurant?.cuisineTags) ? restaurant.cuisineTags : [],
-        displayTags: Array.isArray(restaurant?.displayTags) ? restaurant.displayTags : [],
-        dietaryTags: Array.isArray(restaurant?.dietaryTags) ? restaurant.dietaryTags : [],
-        filterTags: Array.isArray(restaurant?.filterTags) ? restaurant.filterTags : [],
-        menuItems: Array.isArray(restaurant?.menuItems) ? restaurant.menuItems : [],
-      },
-    ]),
-  );
-}
-
-async function fetchGeminiRestaurantRefresh(restaurants: any[]) {
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  const candidates = restaurants
-    .slice(0, 20)
-    .map((restaurant) => ({
-      restaurantId: String(restaurant?._id || ""),
-      name: String(restaurant?.name || ""),
-      address: String(restaurant?.address || ""),
-      description: String(restaurant?.description || ""),
-      website: String(restaurant?.website || ""),
-      primaryType: String(restaurant?.primaryType || ""),
-      openingHours: String(restaurant?.openingHours || ""),
-      cuisineTags: Array.isArray(restaurant?.cuisineTags) ? restaurant.cuisineTags.slice(0, 10) : [],
-      dietaryTags: Array.isArray(restaurant?.dietaryTags) ? restaurant.dietaryTags.slice(0, 10) : [],
-      menuItems: Array.isArray(restaurant?.menuItems)
-        ? restaurant.menuItems.slice(0, 6).map((item: any) => ({
-            name: String(item?.name || ""),
-            description: String(item?.description || ""),
-          }))
-        : [],
-    }))
-    .filter((restaurant) => restaurant.restaurantId && restaurant.name);
-
-  if (!apiKey || !candidates.length) {
-    return new Map<
-      string,
-      { cuisineTags: string[]; displayTags: string[]; dietaryTags: string[]; filterTags: string[]; menuItems: any[] }
-    >();
-  }
-
-  const prompt = [
-    "You are improving restaurant discovery tags for a food app.",
-    "Return only helpful discovery tags supported by the provided restaurant metadata.",
-    "Cuisine tags should be broad and useful for browsing, such as coffee, cafe, bakery, donuts, breakfast, brunch, sandwiches, desserts, quick-bites, vegetarian-friendly, gluten-free-friendly, vegan-friendly, noodles, sushi, tacos, seafood, or family-friendly.",
-    "Display tags should be the cleanest frontend-ready chips to show on cards and details.",
-    "Filter tags and dietary tags must stay conservative and only use likely values from this set: vegan, vegetarian, halal, kosher, gluten-free.",
-    "If current tags already seem useful, you may keep them and add a few more. Do not remove obviously correct tags.",
-    "Menu items are fallback guesses only and should be short plain names without prices.",
-    JSON.stringify(candidates),
-  ].join("\n\n");
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseJsonSchema: {
-            type: "object",
-            properties: {
-              restaurants: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    restaurantId: { type: "string" },
-                    cuisineTags: { type: "array", items: { type: "string" } },
-                    displayTags: { type: "array", items: { type: "string" } },
-                    dietaryTags: {
-                      type: "array",
-                      items: {
-                        type: "string",
-                        enum: ["vegan", "vegetarian", "halal", "kosher", "gluten-free"],
-                      },
-                    },
-                    filterTags: {
-                      type: "array",
-                      items: {
-                        type: "string",
-                        enum: ["vegan", "vegetarian", "halal", "kosher", "gluten-free"],
-                      },
-                    },
-                    menuItems: {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: {
-                          name: { type: "string" },
-                          description: { type: ["string", "null"] },
-                        },
-                        required: ["name", "description"],
-                      },
-                    },
-                  },
-                  required: [
-                    "restaurantId",
-                    "cuisineTags",
-                    "displayTags",
-                    "dietaryTags",
-                    "filterTags",
-                    "menuItems"
-                  ],
-                },
-              },
-            },
-            required: ["restaurants"],
-          },
-        },
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    return new Map();
-  }
-
-  const payload = await response.json();
-  const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
-  const parsed = typeof text === "string" ? parseJsonResponse(text) : null;
-  const enrichedRestaurants = Array.isArray(parsed?.restaurants) ? parsed.restaurants : [];
-
-  return new Map(
-    enrichedRestaurants.map((restaurant: any) => [
-      String(restaurant?.restaurantId || ""),
-      {
-        cuisineTags: Array.isArray(restaurant?.cuisineTags) ? restaurant.cuisineTags : [],
-        displayTags: Array.isArray(restaurant?.displayTags) ? restaurant.displayTags : [],
-        dietaryTags: Array.isArray(restaurant?.dietaryTags) ? restaurant.dietaryTags : [],
-        filterTags: Array.isArray(restaurant?.filterTags) ? restaurant.filterTags : [],
-        menuItems: Array.isArray(restaurant?.menuItems) ? restaurant.menuItems : [],
-      },
-    ]),
-  );
-}
-
-async function normalizePlace(place: any, apiKey: string, syncedAt: string, geminiEnrichment?: any) {
-  const photoEntries = Array.isArray(place?.photos) ? place.photos.slice(0, 2) : [];
-  const imageResults = await Promise.all(
-    photoEntries.map(async (photo: any, index: number) => {
-      const photoName = String(photo?.name || "").trim();
-      if (!photoName) {
-        return null;
-      }
-
-      const photoUri = await getPhotoUri(photoName, apiKey);
-      if (!photoUri) {
-        return null;
-      }
-
-      const authorAttributions = Array.isArray(photo?.authorAttributions)
-        ? photo.authorAttributions.map((attribution: any) => ({
-            displayName: attribution?.displayName || null,
-            uri: attribution?.uri || null,
-            photoUri: attribution?.photoUri || null,
-          }))
-        : undefined;
-
-      return {
-        url: photoUri,
-        isCover: index === 0,
-        authorAttributions,
-      };
-    }),
-  );
-
-  const images = imageResults.filter(Boolean);
-  const menuItems = sanitizeMenuItems(
-    (geminiEnrichment?.menuItems || []).map((item: any) => ({
-      name: item?.name,
-      description: item?.description,
-      price: 0,
-    })),
-  );
-
-  const googlePlaceId = String(place?.id || "").trim();
+  const osmUri = `https://www.openstreetmap.org/${encodeURIComponent(osmType)}/${encodeURIComponent(osmId)}`;
 
   return {
-    googlePlaceId,
-    source: "google",
+    googlePlaceId: `osm:${osmType}:${osmId}`,
+    source: "openstreetmap",
     syncStatus: "complete",
     lastSyncedAt: syncedAt,
-    name: normalizeOptionalString(extractDisplayText(place?.displayName), 120) || "Google restaurant",
-    address: normalizeOptionalString(place?.formattedAddress, 240) || "Address unavailable",
-    lat: Number(place?.location?.latitude || 0),
-    lng: Number(place?.location?.longitude || 0),
-    description:
-      normalizeOptionalString(extractDisplayText(place?.editorialSummary), 1500) ||
-      normalizeOptionalString(extractDisplayText(place?.primaryTypeDisplayName), 120),
-    phone: normalizeOptionalString(place?.nationalPhoneNumber, 80),
-    website: normalizeHttpUrl(place?.websiteUri),
-    googleMapsUri: googlePlaceId
-      ? `https://www.google.com/maps/search/?api=1&query_place_id=${encodeURIComponent(
-          googlePlaceId,
-        )}`
-      : null,
-    openingHours: normalizeOptionalString(extractOpeningHours(place), 400),
-    menuUrl: null,
-    primaryType: normalizeOptionalString(place?.primaryType, 120),
-    cuisineTags: extractCuisineTags(place, geminiEnrichment?.cuisineTags || []),
-    dietaryTags: extractDietaryTags(place, [
-      ...(geminiEnrichment?.dietaryTags || []),
-      ...(geminiEnrichment?.filterTags || []),
-    ]),
-    coverImage: images[0]?.url || null,
-    images,
-    menuItems,
-    googleRating: Number.isFinite(Number(place?.rating)) ? Number(place.rating) : null,
-    googleRatingCount: Number.isFinite(Number(place?.userRatingCount))
-      ? Number(place.userRatingCount)
-      : 0,
+    name,
+    address: normalizeOptionalString(buildOsmAddress(tags), 240) || "Address unavailable",
+    lat,
+    lng,
+    description: normalizeOptionalString(tags.description || tags["description:en"], 1500),
+    phone: normalizeOptionalString(tags.phone || tags["contact:phone"], 80),
+    website: safeNormalizeHttpUrl(tags.website || tags["contact:website"]),
+    googleMapsUri: osmUri,
+    openingHours: normalizeOptionalString(tags.opening_hours, 400),
+    menuUrl: safeNormalizeHttpUrl(tags.menu || tags["contact:menu"]),
+    primaryType: normalizeOptionalString(tags.amenity, 120),
+    cuisineTags: inferOsmCuisineTags(tags),
+    dietaryTags: inferOsmDietaryTags(tags),
+    coverImage: null,
+    images: [],
+    menuItems: [],
+    googleRating: null,
+    googleRatingCount: 0,
   };
 }
 
@@ -565,23 +264,12 @@ export const syncNearbyFromGoogle = action({
     force: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const apiKey = String(
-      process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY || "",
-    ).trim();
     const radiusMeters = Number(args.radiusMeters || getNearbyRadiusMeters());
     const cacheKey = buildNearbyCacheKey(args.lat, args.lng, radiusMeters);
     const syncedAt = nowIso();
     const existingCache = await ctx.runQuery(internal.googleSyncStore.getNearbySyncCache, {
       cacheKey,
     });
-
-    if (!apiKey) {
-      return {
-        status: "skipped",
-        reason: "missing_google_maps_api_key",
-        cacheKey,
-      };
-    }
 
     if (!args.force && existingCache?.status === "complete" && isCacheFresh(existingCache.lastSyncedAt)) {
       return {
@@ -593,28 +281,17 @@ export const syncNearbyFromGoogle = action({
     }
 
     try {
-      const { places: rawPlaces, effectiveRadius } = await fetchExpandedNearbyPlaces({
-        apiKey,
-        lat: args.lat,
-        lng: args.lng,
+      const { elements, effectiveRadius } = await fetchExpandedOsmRestaurants(
+        args.lat,
+        args.lng,
         radiusMeters,
-      });
-      const geminiByPlaceId = await fetchGeminiEnrichment(rawPlaces);
-      const normalizedPlaces = [];
-
-      for (const place of rawPlaces) {
-        const googlePlaceId = String(place?.id || "").trim();
-        if (!googlePlaceId) {
-          continue;
-        }
-
-        normalizedPlaces.push(
-          await normalizePlace(place, apiKey, syncedAt, geminiByPlaceId.get(googlePlaceId)),
-        );
-      }
+      );
+      const restaurants = elements
+        .map((element) => normalizeOsmRestaurant(element, syncedAt))
+        .filter(Boolean);
 
       const result = await ctx.runMutation(internal.googleSyncStore.upsertGoogleRestaurants, {
-        restaurants: normalizedPlaces,
+        restaurants,
       });
       await ctx.runMutation(internal.googleSyncStore.recordNearbySyncResult, {
         cacheKey,
@@ -622,8 +299,8 @@ export const syncNearbyFromGoogle = action({
         centerLng: args.lng,
         radiusMeters: effectiveRadius,
         status: "complete",
-        source: "google_places",
-        itemCount: normalizedPlaces.length,
+        source: "openstreetmap",
+        itemCount: restaurants.length,
         lastAttemptAt: syncedAt,
         lastSyncedAt: syncedAt,
         errorMessage: null,
@@ -632,20 +309,20 @@ export const syncNearbyFromGoogle = action({
       return {
         status: "complete",
         cacheKey,
-        itemCount: normalizedPlaces.length,
+        itemCount: restaurants.length,
         radiusMeters: effectiveRadius,
         inserted: result.inserted,
         updated: result.updated,
       };
     } catch (error: any) {
-      const message = String(error?.message || "Unknown Google sync error");
+      const message = String(error?.message || "Unknown OpenStreetMap sync error");
       await ctx.runMutation(internal.googleSyncStore.recordNearbySyncResult, {
         cacheKey,
         centerLat: args.lat,
         centerLng: args.lng,
         radiusMeters,
         status: "error",
-        source: "google_places",
+        source: "openstreetmap",
         itemCount: 0,
         lastAttemptAt: syncedAt,
         lastSyncedAt: existingCache?.lastSyncedAt || null,
@@ -665,77 +342,7 @@ export const enrichRestaurantTags = action({
   args: {
     restaurantIds: v.array(v.id("restaurants")),
   },
-  handler: async (ctx, args) => {
-    const restaurants = await ctx.runQuery(internal.googleSyncStore.getRestaurantsForTagEnrichment, {
-      restaurantIds: args.restaurantIds,
-    });
-
-    const candidates = restaurants.filter(
-      (restaurant: any) => restaurant?.source === "google" && String(restaurant?.googlePlaceId || "").trim(),
-    );
-
-    if (!candidates.length) {
-      return { updated: [] };
-    }
-
-    const geminiByRestaurantId = await fetchGeminiRestaurantRefresh(candidates);
-    const updates = candidates
-      .map((restaurant: any) => {
-        const enrichment = geminiByRestaurantId.get(String(restaurant._id));
-        if (!enrichment) {
-          return null;
-        }
-
-        const placeLikeRecord = {
-          displayName: restaurant.name,
-          formattedAddress: restaurant.address,
-          editorialSummary: restaurant.description,
-          websiteUri: restaurant.website,
-          primaryType: restaurant.primaryType,
-          primaryTypeDisplayName: restaurant.primaryType,
-          types: restaurant.cuisineTags || [],
-          regularOpeningHours: {
-            weekdayDescriptions: restaurant.openingHours
-              ? String(restaurant.openingHours)
-                  .split("|")
-                  .map((part) => String(part).trim())
-                  .filter(Boolean)
-              : [],
-          },
-          servesVegetarianFood: Array.isArray(restaurant.dietaryTags)
-            ? restaurant.dietaryTags.includes("vegetarian")
-            : false,
-        };
-
-        return {
-          restaurantId: restaurant._id,
-          cuisineTags: extractCuisineTags(placeLikeRecord, [
-            ...(enrichment.cuisineTags || []),
-            ...(enrichment.displayTags || []),
-          ]),
-          dietaryTags: extractDietaryTags(placeLikeRecord, [
-            ...(enrichment.dietaryTags || []),
-            ...(enrichment.filterTags || []),
-          ]),
-          menuItems: sanitizeMenuItems(
-            (enrichment.menuItems || []).map((item: any) => ({
-              name: item?.name,
-              description: item?.description,
-              price: 0,
-            })),
-          ),
-        };
-      })
-      .filter(Boolean);
-
-    if (!updates.length) {
-      return { updated: [] };
-    }
-
-    const applied = await ctx.runMutation(internal.googleSyncStore.applyGeminiRestaurantEnrichment, {
-      restaurants: updates,
-    });
-
-    return { updated: applied };
+  handler: async () => {
+    return { updated: [] };
   },
 });

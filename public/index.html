@@ -3,14 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Nearby Bites</title>
+    <title>NearbyBites — Discover Local Restaurants</title>
+    <meta name="description" content="Discover nearby restaurants, read reviews, and explore menus. NearbyBites helps you find the best local dining options wherever you are." />
+
+    <!-- Leaflet (OpenStreetMap fallback) -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIINfQPDKSMTU7Gns4LJQy2w+M7pTZR6W7E="
+      crossorigin=""
+    />
+
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+
+    <!-- ── Loading progress bar ──────────────────────────────────────────── -->
+    <div id="progress-bar-track">
+      <div id="progress-bar"></div>
+    </div>
+
     <div class="app-shell">
       <header class="topbar card">
         <div>
-          <h1>Nearby Bites</h1>
+          <h1>NearbyBites</h1>
           <p class="muted">Discover local restaurants, menus, and reviews.</p>
         </div>
 
@@ -22,12 +38,13 @@
         </div>
       </header>
 
+      <!-- ── Location Modal ──────────────────────────────────────────────── -->
       <div id="location-modal" class="modal-overlay hidden">
         <div class="modal-card">
           <div class="modal-header">
             <div>
               <h2>Choose a location</h2>
-              <p class="muted">Use your browser location, search with Google-backed geocoding, or place a pin on the map.</p>
+              <p class="muted">Use your browser location, search an address, or place a pin on the map.</p>
             </div>
             <button id="close-location-modal" class="btn btn-outline" type="button">Close</button>
           </div>
@@ -62,12 +79,13 @@
         </div>
       </div>
 
+      <!-- ── Auth Modal ─────────────────────────────────────────────────── -->
       <div id="auth-modal" class="modal-overlay hidden">
         <div class="modal-card">
           <div class="modal-header">
             <div>
               <h2>Sign up or log in</h2>
-              <p class="muted">Customers save favorites and reviews. Owners manage listings. Moderators remove reviews, restaurants, and users.</p>
+              <p class="muted">Customers save favorites and write reviews. Owners manage listings. Moderators keep everything in order.</p>
             </div>
             <button id="close-auth-modal" class="btn btn-outline" type="button">Close</button>
           </div>
@@ -76,13 +94,7 @@
             <form id="login-form" class="subcard auth-form">
               <h3>Log In</h3>
               <input name="email" type="email" placeholder="Email" autocomplete="email" required />
-              <input
-                name="password"
-                type="password"
-                placeholder="Password"
-                autocomplete="current-password"
-                required
-              />
+              <input name="password" type="password" placeholder="Password" autocomplete="current-password" required />
               <button type="submit" class="btn btn-primary">Log In</button>
             </form>
 
@@ -90,30 +102,20 @@
               <h3>Create Account</h3>
               <input name="displayName" type="text" placeholder="Display name" autocomplete="name" required />
               <input name="email" type="email" placeholder="Email" autocomplete="email" required />
-              <input
-                name="password"
-                type="password"
-                placeholder="Password (8+ characters)"
-                autocomplete="new-password"
-                required
-              />
+              <input name="password" type="password" placeholder="Password (8+ characters)" autocomplete="new-password" required />
               <select name="role" required>
                 <option value="customer">Customer</option>
                 <option value="owner">Restaurant Owner</option>
-                <option value="moderator">Moderator</option>
               </select>
               <button type="submit" class="btn btn-primary">Create Account</button>
             </form>
           </div>
 
-          <p id="auth-status" class="muted auth-helper">
-            This project currently uses Convex-backed email and password auth while the UI stays on the main discovery page.
-          </p>
+          <p id="auth-status" class="muted auth-helper"></p>
         </div>
       </div>
 
-
-
+      <!-- ── Location Bar ───────────────────────────────────────────────── -->
       <section class="location-bar card">
         <div class="location-header-row">
           <div>
@@ -126,10 +128,7 @@
           <button id="open-location-modal" class="btn btn-primary icon-btn" type="button" aria-label="Choose location">
             <span class="icon-pin" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M12 21s6-5.686 6-11a6 6 0 1 0-12 0c0 5.314 6 11 6 11Z"
-                  fill="currentColor"
-                />
+                <path d="M12 21s6-5.686 6-11a6 6 0 1 0-12 0c0 5.314 6 11 6 11Z" fill="currentColor" />
                 <circle cx="12" cy="10" r="2.8" fill="white" />
               </svg>
             </span>
@@ -181,6 +180,7 @@
         </div>
       </section>
 
+      <!-- ── Main Feed + Details ────────────────────────────────────────── -->
       <main class="layout">
         <section class="feed card">
           <div class="section-title-row">
@@ -201,6 +201,7 @@
         </aside>
       </main>
 
+      <!-- ── Owner / Moderator Dashboard ───────────────────────────────── -->
       <section id="owner-panel" class="owner card hidden">
         <div class="section-title-row">
           <div>
@@ -212,16 +213,16 @@
         <div class="owner-grid">
           <form id="create-restaurant-form" class="subcard">
             <h3>Create Restaurant</h3>
-            <p class="muted">The address is verified with Google geocoding when that backend key is available.</p>
+            <p class="muted">The address is geocoded to place your restaurant on the map.</p>
             <input name="name" placeholder="Restaurant name" required />
             <input name="address" placeholder="City or full address" required />
             <input name="phone" placeholder="Phone" />
-            <input name="website" placeholder="Website" />
-            <input name="openingHours" placeholder="Opening hours" />
+            <input name="website" placeholder="Website URL" />
+            <input name="openingHours" placeholder="Opening hours (e.g. Mon–Fri 11am–10pm)" />
             <input name="menuUrl" placeholder="Menu URL" />
             <input name="cuisineTags" placeholder="Cuisine tags (comma separated)" />
-            <input name="dietaryTags" placeholder="Dietary tags (vegan, halal, gluten-free)" />
-            <textarea name="description" placeholder="Description"></textarea>
+            <input name="dietaryTags" placeholder="Dietary options (vegan, halal, gluten-free)" />
+            <textarea name="description" placeholder="Short description"></textarea>
             <button type="submit" class="btn btn-primary">Create</button>
           </form>
 
@@ -236,12 +237,12 @@
             <input name="name" placeholder="Restaurant name" required />
             <input name="address" placeholder="City or full address" required />
             <input name="phone" placeholder="Phone" />
-            <input name="website" placeholder="Website" />
+            <input name="website" placeholder="Website URL" />
             <input name="openingHours" placeholder="Opening hours" />
             <input name="menuUrl" placeholder="Menu URL" />
             <input name="cuisineTags" placeholder="Cuisine tags (comma separated)" />
-            <input name="dietaryTags" placeholder="Dietary tags (vegan, halal, gluten-free)" />
-            <textarea name="description" placeholder="Description"></textarea>
+            <input name="dietaryTags" placeholder="Dietary options (vegan, halal, gluten-free)" />
+            <textarea name="description" placeholder="Short description"></textarea>
             <div class="owner-actions">
               <button type="submit" class="btn btn-primary">Update Restaurant</button>
               <button id="toggle-restaurant-visibility-btn" type="button" class="btn btn-outline hidden">
@@ -270,8 +271,8 @@
           </form>
 
           <div id="moderator-users-card" class="subcard hidden">
-            <h3>Moderator Tools</h3>
-            <p class="muted">Delete accounts that should no longer have access.</p>
+            <h3>Moderator Tools — User Management</h3>
+            <p class="muted">Suspend or permanently delete user accounts.</p>
             <div id="moderator-users-list" class="owner-restaurants-list"></div>
           </div>
         </div>
@@ -281,8 +282,33 @@
 
     <div id="toast" class="toast hidden"></div>
 
+    <!-- Runtime config injected by server -->
     <script src="/runtime-config.js"></script>
+
+    <!-- Convex browser SDK (only used when CONVEX_URL is set) -->
     <script src="/vendor/convex/browser.bundle.js"></script>
+
+    <!-- Google Maps JS SDK (loaded dynamically if key is present) -->
+    <script>
+      (function () {
+        var cfg = (window.__APP_CONFIG__ || {});
+        if (cfg.googleMapsApiKey) {
+          var s = document.createElement('script');
+          s.src = 'https://maps.googleapis.com/maps/api/js?key=' + cfg.googleMapsApiKey + '&libraries=places';
+          s.async = true;
+          s.defer = true;
+          document.head.appendChild(s);
+        }
+      })();
+    </script>
+
+    <!-- Leaflet (open-source map fallback) -->
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+
     <script type="module" src="/app.js"></script>
   </body>
 </html>

@@ -35,14 +35,12 @@ function getRuntimeConfig() {
     ...readEnvFile(".env"),
     ...readEnvFile(".env.local"),
   };
-  const googleMapsBrowserKey = String(env.GOOGLE_MAPS_BROWSER_KEY || "").trim();
 
   return {
     convexUrl: String(env.CONVEX_URL || "").trim(),
     appMode: String(env.CONVEX_URL || "").trim() ? "convex" : "unconfigured",
     clientOrigin: String(env.CLIENT_ORIGIN || "").trim(),
-    nearbyRadiusMeters: Number(env.GOOGLE_NEARBY_RADIUS_METERS || 5000),
-    googleMapsBrowserKey,
+    nearbyRadiusMeters: Number(env.NEARBY_RADIUS_METERS || env.OSM_NEARBY_RADIUS_METERS || 5000),
   };
 }
 
