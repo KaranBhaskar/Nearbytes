@@ -14,7 +14,8 @@
     "build": "node scripts/build-static.js",
     "seed": "node server/seed.js",
     "convex:dev": "npx convex dev --typecheck disable",
-    "convex:deploy": "npx convex deploy"
+    "convex:deploy": "npx convex deploy",
+    "test": "node -e \"console.log('No automated tests configured yet.')\""
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -7,15 +7,16 @@
 > **Optional maps upgrade:** Add a Google Maps API key to use Google Maps tiles and Google Places data instead of OpenStreetMap.
 
 ---
+
 ## Team
 
-| Name | Role |
-|---|---|
-| Talha Hassan | Project Manager |
-| Karan Bhaskar | Technical Manager |
-| Dev Shah | Front-End Lead |
-| Mohammad Jafari | Back-End Lead |
-| Rayan Khan | Software Quality Lead |
+| Name            | Role                  |
+| --------------- | --------------------- |
+| Talha Hassan    | Project Manager       |
+| Karan Bhaskar   | Technical Manager     |
+| Dev Shah        | Front-End Lead        |
+| Mohammad Jafari | Back-End Lead         |
+| Rayan Khan      | Software Quality Lead |
 
 ## Features
 
@@ -55,15 +56,44 @@ cp .env.example .env
 
 Then open `.env` and fill in what you need. **At minimum, no changes are needed to get running locally.** All API keys are optional.
 
-### 3. Seed demo data (optional)
+### 3. Choose how to run
+
+#### Option A: Local SQLite mode (default)
+
+Use this when `CONVEX_URL` is empty (or removed) in `.env`.
+
+```bash
+npm run dev
+```
+
+Local DB behavior in this mode:
+
+- A local SQLite DB is required and is created automatically as `app.db` on first run.
+- If you want demo data/users, run `npm run seed`.
+- `app.db`, `app.db-shm`, and `app.db-wal` stay local and are gitignored.
+
+#### Option B: Convex cloud mode (optional)
+
+Use this when `CONVEX_URL` is set in `.env`.
+
+```bash
+npm run dev
+```
+
+Notes:
+
+- App data is served from Convex.
+- Local SQLite files are not required for app data in this mode.
+
+### 4. Seed demo data (optional)
 
 ```bash
 npm run seed
 ```
 
-This creates demo restaurants, reviews, and user accounts in `app.db`.
+This seeds demo restaurants, reviews, and user accounts in your local SQLite database.
 
-### 4. Start the server
+### 5. Start the server
 
 ```bash
 npm run dev
@@ -71,21 +101,26 @@ npm run dev
 
 The app will be available at **http://localhost:3000**
 
+### Local database behavior
+
+- `app.db` is created locally on first run (or when you run `npm run seed`).
+- SQLite runtime files (`app.db`, `app.db-shm`, `app.db-wal`) are gitignored and should not be committed.
+
 ---
 
 ## Environment Variables
 
 Copy `.env.example` to `.env` and configure as needed.
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `PORT` | No | `3000` | Port to run the local server on |
-| `JWT_SECRET` | Yes (prod) | `dev-secret-change-me` | Secret used to sign auth tokens. **Change this in production.** |
-| `CONVEX_URL` | No | *(blank)* | Your Convex deployment URL. Leave blank to use local SQLite. |
-| `GOOGLE_MAPS_API_KEY` | No | *(blank)* | Enables Google Maps tiles, Google Places restaurant data, and Google Geocoding. [Get a key →](https://developers.google.com/maps) |
-| `GEMINI_API_KEY` | No | *(blank)* | Enables AI-powered tag enrichment via Gemini. [Get a key →](https://aistudio.google.com/app/apikey) |
-| `OSM_NEARBY_RADIUS_METERS` | No | `5000` | Default search radius for nearby restaurants (meters) |
-| `CLIENT_ORIGIN` | No | `http://localhost:3000` | Your production domain (used for CORS and links) |
+| Variable                   | Required   | Default                 | Description                                                                                                                       |
+| -------------------------- | ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                     | No         | `3000`                  | Port to run the local server on                                                                                                   |
+| `JWT_SECRET`               | Yes (prod) | `dev-secret-change-me`  | Secret used to sign auth tokens. **Change this in production.**                                                                   |
+| `CONVEX_URL`               | No         | _(blank)_               | Your Convex deployment URL. Leave blank to use local SQLite.                                                                      |
+| `GOOGLE_MAPS_API_KEY`      | No         | _(blank)_               | Enables Google Maps tiles, Google Places restaurant data, and Google Geocoding. [Get a key →](https://developers.google.com/maps) |
+| `GEMINI_API_KEY`           | No         | _(blank)_               | Enables AI-powered tag enrichment via Gemini. [Get a key →](https://aistudio.google.com/app/apikey)                               |
+| `OSM_NEARBY_RADIUS_METERS` | No         | `5000`                  | Default search radius for nearby restaurants (meters)                                                                             |
+| `CLIENT_ORIGIN`            | No         | `http://localhost:3000` | Your production domain (used for CORS and links)                                                                                  |
 
 ### Setting up Google Maps (optional)
 
@@ -111,11 +146,11 @@ Without this key, restaurants with no tags get **2 stable deterministic tags** a
 
 After running `npm run seed`, the following accounts are available:
 
-| Role | Email | Password |
-|---|---|---|
+| Role      | Email                      | Password         |
+| --------- | -------------------------- | ---------------- |
 | Moderator | `nearbytesadmin@email.com` | `nearbytesadmin` |
-| Owner | `owner@example.com` | `password123` |
-| Customer | `customer@example.com` | `password123` |
+| Owner     | `owner@example.com`        | `password123`    |
+| Customer  | `customer@example.com`     | `password123`    |
 
 > The **moderator account** is automatically created/reset on server startup. You can always log in with these credentials.
 
@@ -169,15 +204,15 @@ nearbytes/
 
 ## Available Scripts
 
-| Script | What it does |
-|---|---|
-| `npm run dev` | Start the local server (auto-picks Convex or SQLite based on `CONVEX_URL`) |
-| `npm run start` | Start the production server (SQLite mode only) |
-| `npm run seed` | Seed `app.db` with demo users, restaurants, menus, and reviews |
-| `npm run build` | Build the static frontend to `dist/` for Vercel |
-| `npm run dev:static` | Serve only the static frontend (no backend) |
-| `npm run convex:dev` | Start Convex local dev environment |
-| `npm run convex:deploy` | Deploy Convex schema and functions to production |
+| Script                  | What it does                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| `npm run dev`           | Start the local server (auto-picks Convex or SQLite based on `CONVEX_URL`)     |
+| `npm run start`         | Start the production server (SQLite mode only)                                 |
+| `npm run seed`          | Create/seed local SQLite data with demo users, restaurants, menus, and reviews |
+| `npm run build`         | Build the static frontend to `dist/` for Vercel                                |
+| `npm run dev:static`    | Serve only the static frontend (no backend)                                    |
+| `npm run convex:dev`    | Start Convex local dev environment                                             |
+| `npm run convex:deploy` | Deploy Convex schema and functions to production                               |
 
 ---
 
@@ -186,12 +221,14 @@ nearbytes/
 ### Backend selection
 
 When `npm run dev` starts:
+
 - If `CONVEX_URL` is set in `.env` → uses Convex cloud backend (real-time, deployed)
 - If `CONVEX_URL` is blank → starts a local Express server on `PORT` with SQLite (`app.db`)
 
 ### Restaurant data
 
 When you search for restaurants near a location:
+
 - With `GOOGLE_MAPS_API_KEY` → fetches from **Google Places API (New)**, stores results in the local DB
 - Without → fetches from **OpenStreetMap Overpass API**, stores results in the local DB
 
@@ -200,6 +237,7 @@ All results are cached locally so subsequent loads are fast.
 ### Tag generation
 
 Every restaurant has cuisine and dietary tags. When a restaurant has no tags:
+
 1. If `GEMINI_API_KEY` is set → Gemini AI generates relevant tags based on the name and address
 2. Otherwise → 2 stable, deterministic tags are assigned from a curated pool (consistent across restarts)
 
@@ -236,9 +274,9 @@ npm start       # launch production server
 ## Contributing
 
 PRs are welcome. Please:
+
 - Keep commits focused and descriptive
 - Test both the local SQLite mode and Convex mode if touching shared logic
 - Run `npm run build` to verify the static build still works
 
 ---
-
