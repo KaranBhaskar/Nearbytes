@@ -901,14 +901,16 @@ async function loadRestaurantDetails(restaurantId) {
           ? menuItems
               .map(
                 (item) => `
-              <div class="menu-item">
-                <strong>${item.name}</strong> - $${Number(item.price).toFixed(2)}
-                <p class="muted">${item.description || ''}</p>
-              </div>
-            `
+                  <div class="menu-item">
+                    <strong>${item.name}</strong> - $${Number(item.price).toFixed(2)}
+                    <p class="muted">${item.description || ''}</p>
+                  </div>
+                `
               )
               .join('')
-          : '<p class="muted">No menu items yet.</p>'
+          : restaurant.menuUrl
+            ? `<p><a href="${restaurant.menuUrl}" target="_blank" rel="noreferrer">View restaurant menu</a></p>`
+            : '<p class="muted">No menu items yet.</p>'
       }
     </div>
 
@@ -1118,6 +1120,7 @@ function populateOwnerRestaurantForm(restaurantId) {
   els.editRestaurantForm.elements.cuisineTags.value = toCuisineTagString(restaurant.cuisineTags);
   els.editRestaurantForm.elements.dietaryTags.value = toCuisineTagString(restaurant.dietaryTags);
   els.editRestaurantForm.elements.description.value = restaurant.description || '';
+  els.editRestaurantForm.elements.menuUrl.value = restaurant.menuUrl || '';
 }
 
 function applyTheme(theme) {
@@ -1267,6 +1270,7 @@ function bindEvents() {
           description: String(formData.get('description') || '').trim(),
           cuisineTags: String(formData.get('cuisineTags') || '').trim(),
           dietaryTags: String(formData.get('dietaryTags') || '').trim(),
+          menuUrl: String(formData.get('menuUrl') || '').trim(),
         },
       });
 
@@ -1406,6 +1410,7 @@ function bindEvents() {
             description: String(formData.get('description') || '').trim(),
             cuisineTags: String(formData.get('cuisineTags') || '').trim(),
             dietaryTags: String(formData.get('dietaryTags') || '').trim(),
+            menuUrl: String(formData.get('menuUrl') || '').trim(),
           },
         });
 

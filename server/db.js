@@ -26,6 +26,7 @@ function migrate(database) {
       owner_id INTEGER,
       name TEXT NOT NULL,
       address TEXT NOT NULL,
+      menu_url TEXT,
       lat REAL NOT NULL,
       lng REAL NOT NULL,
       description TEXT,
@@ -120,6 +121,9 @@ function migrate(database) {
   }
   if (!restaurantColumns.some((column) => column.name === 'google_photo_ref')) {
     database.exec('ALTER TABLE restaurants ADD COLUMN google_photo_ref TEXT');
+  }
+  if (!restaurantColumns.some((column) => column.name === 'menu_url')) {
+    database.exec('ALTER TABLE restaurants ADD COLUMN menu_url TEXT');
   }
 }
 
