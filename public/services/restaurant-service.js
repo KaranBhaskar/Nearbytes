@@ -45,7 +45,9 @@ function hasConvexConfig() {
 
 function requireConvexConfig() {
   if (!hasConvexConfig()) {
-    throw new Error("Set CONVEX_URL to connect the app to your Convex deployment.");
+    throw new Error(
+      "Set CONVEX_URL to connect the app to your Convex deployment.",
+    );
   }
 }
 
@@ -101,19 +103,28 @@ async function getConvexClient() {
 async function runQuery(functionName, args = {}) {
   const convexLib = await loadConvexBundle();
   const convexClient = await getConvexClient();
-  return convexClient.query(getFunctionReference(convexLib, functionName), args);
+  return convexClient.query(
+    getFunctionReference(convexLib, functionName),
+    args,
+  );
 }
 
 async function runMutation(functionName, args = {}) {
   const convexLib = await loadConvexBundle();
   const convexClient = await getConvexClient();
-  return convexClient.mutation(getFunctionReference(convexLib, functionName), args);
+  return convexClient.mutation(
+    getFunctionReference(convexLib, functionName),
+    args,
+  );
 }
 
 async function runAction(functionName, args = {}) {
   const convexLib = await loadConvexBundle();
   const convexClient = await getConvexClient();
-  return convexClient.action(getFunctionReference(convexLib, functionName), args);
+  return convexClient.action(
+    getFunctionReference(convexLib, functionName),
+    args,
+  );
 }
 
 function normalizeLocalUser(user) {
@@ -168,7 +179,8 @@ async function localApi(path, options = {}) {
   const response = await fetch(path, {
     ...options,
     headers,
-    body: body != null && !(body instanceof FormData) ? JSON.stringify(body) : body,
+    body:
+      body != null && !(body instanceof FormData) ? JSON.stringify(body) : body,
   });
 
   let payload = null;
@@ -223,7 +235,9 @@ export async function restoreSession() {
   }
 
   try {
-    const user = await runQuery(CONVEX_FUNCTIONS.getCurrentUser, { sessionToken });
+    const user = await runQuery(CONVEX_FUNCTIONS.getCurrentUser, {
+      sessionToken,
+    });
     if (!user) {
       clearStoredSession();
       return null;
@@ -288,7 +302,9 @@ export async function signOutUser() {
     if (sessionToken && hasConvexConfig()) {
       await runMutation(CONVEX_FUNCTIONS.signOut, { sessionToken });
     } else if (sessionToken) {
-      await localApi("/api/auth/logout", { method: "POST", body: {} }).catch(() => null);
+      await localApi("/api/auth/logout", { method: "POST", body: {} }).catch(
+        () => null,
+      );
     }
   } finally {
     clearStoredSession();
@@ -307,10 +323,13 @@ export async function hydrateFavoriteIds(localFavorites = []) {
 
   const validLocalFavorites = localFavorites.filter(looksLikeConvexId);
   if (validLocalFavorites.length) {
-    const merged = await runMutation(CONVEX_FUNCTIONS.syncFavoriteRestaurantIds, {
-      sessionToken,
-      restaurantIds: validLocalFavorites,
-    });
+    const merged = await runMutation(
+      CONVEX_FUNCTIONS.syncFavoriteRestaurantIds,
+      {
+        sessionToken,
+        restaurantIds: validLocalFavorites,
+      },
+    );
     return merged.map(String);
   }
 
@@ -352,6 +371,7 @@ export async function listNearbyRestaurants({
       lat: String(lat),
       lng: String(lng),
       limit: String(limit),
+      radiusMeters: String(effectiveRadiusMeters),
     });
     if (cursor) {
       params.set("cursor", cursor);
@@ -360,7 +380,9 @@ export async function listNearbyRestaurants({
       params.set("dietary", dietary.join(","));
     }
 
-    const result = await localApi(`/api/restaurants/nearby?${params.toString()}`);
+    const result = await localApi(
+      `/api/restaurants/nearby?${params.toString()}`,
+    );
     return {
       ...result,
       items: (result.items || []).map(normalizeLocalRestaurant),
@@ -377,7 +399,10 @@ export async function listNearbyRestaurants({
         radiusMeters: effectiveRadiusMeters,
       });
     } catch (error) {
-      console.warn("OpenStreetMap sync failed, continuing with cached Convex data:", error);
+      console.warn(
+        "OpenStreetMap sync failed, continuing with cached Convex data:",
+        error,
+      );
     }
   }
 
@@ -414,10 +439,14 @@ export async function refineRestaurantTags(restaurantIds = []) {
 
   requireConvexConfig();
 
-  const ids = Array.from(new Set((restaurantIds || []).map(String).filter(looksLikeConvexId)));
+  const ids = Array.from(
+    new Set((restaurantIds || []).map(String).filter(looksLikeConvexId)),
+  );
   if (!ids.length) return [];
 
-  const result = await runAction(CONVEX_FUNCTIONS.enrichRestaurantTags, { restaurantIds: ids });
+  const result = await runAction(CONVEX_FUNCTIONS.enrichRestaurantTags, {
+    restaurantIds: ids,
+  });
   return Array.isArray(result?.updated) ? result.updated : [];
 }
 
@@ -443,7 +472,8 @@ export async function getRestaurantDetails({ id, originLat, originLng }) {
       authorName: review.userName || "Nearby Bites User",
       authorRole: "customer",
       canDelete:
-        String(currentUser?.id || "") === String(review.userId) || currentUser?.role === "moderator",
+        String(currentUser?.id || "") === String(review.userId) ||
+        currentUser?.role === "moderator",
     }));
 
     return {
@@ -457,7 +487,9 @@ export async function getRestaurantDetails({ id, originLat, originLng }) {
       images: detail.images || [],
       menuItems: detail.menuItems || [],
       reviews,
-      myReview: detail.myReview ? { ...detail.myReview, id: String(detail.myReview.id) } : null,
+      myReview: detail.myReview
+        ? { ...detail.myReview, id: String(detail.myReview.id) }
+        : null,
       permissions: {
         canReview: currentUser?.role === "customer",
         canManage:
@@ -493,20 +525,29 @@ export async function searchMapLocation(query) {
 
 export async function reverseGeocodeLocation(lat, lng) {
   if (!hasConvexConfig()) {
-    return localApi(`/api/location/reverse?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`);
+    return localApi(
+      `/api/location/reverse?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`,
+    );
   }
 
   requireConvexConfig();
   return runAction(CONVEX_FUNCTIONS.reverseGeocode, { lat, lng });
 }
 
-export async function upsertRestaurantReview({ restaurantId, rating, comment }) {
+export async function upsertRestaurantReview({
+  restaurantId,
+  rating,
+  comment,
+}) {
   const sessionToken = getRequiredSessionToken();
   if (!hasConvexConfig()) {
-    return localApi(`/api/restaurants/${encodeURIComponent(restaurantId)}/reviews`, {
-      method: "POST",
-      body: { rating, comment },
-    });
+    return localApi(
+      `/api/restaurants/${encodeURIComponent(restaurantId)}/reviews`,
+      {
+        method: "POST",
+        body: { rating, comment },
+      },
+    );
   }
 
   return runMutation(CONVEX_FUNCTIONS.upsertReview, {
@@ -560,10 +601,13 @@ export async function updateManagedRestaurant(payload) {
   const sessionToken = getRequiredSessionToken();
   if (!hasConvexConfig()) {
     const { restaurantId, ...body } = payload;
-    return localApi(`/api/owner/restaurants/${encodeURIComponent(restaurantId)}`, {
-      method: "PUT",
-      body,
-    });
+    return localApi(
+      `/api/owner/restaurants/${encodeURIComponent(restaurantId)}`,
+      {
+        method: "PUT",
+        body,
+      },
+    );
   }
 
   return runMutation(CONVEX_FUNCTIONS.updateRestaurant, {
@@ -575,9 +619,12 @@ export async function updateManagedRestaurant(payload) {
 export async function deleteManagedRestaurant(restaurantId) {
   const sessionToken = getRequiredSessionToken();
   if (!hasConvexConfig()) {
-    return localApi(`/api/owner/restaurants/${encodeURIComponent(restaurantId)}`, {
-      method: "DELETE",
-    });
+    return localApi(
+      `/api/owner/restaurants/${encodeURIComponent(restaurantId)}`,
+      {
+        method: "DELETE",
+      },
+    );
   }
 
   return runMutation(CONVEX_FUNCTIONS.deleteRestaurant, {
@@ -586,13 +633,20 @@ export async function deleteManagedRestaurant(restaurantId) {
   });
 }
 
-export async function setManagedRestaurantVisibility({ restaurantId, isHidden, reason }) {
+export async function setManagedRestaurantVisibility({
+  restaurantId,
+  isHidden,
+  reason,
+}) {
   const sessionToken = getRequiredSessionToken();
   if (!hasConvexConfig()) {
-    return localApi(`/api/owner/restaurants/${encodeURIComponent(restaurantId)}/visibility`, {
-      method: "PUT",
-      body: { isHidden, reason },
-    });
+    return localApi(
+      `/api/owner/restaurants/${encodeURIComponent(restaurantId)}/visibility`,
+      {
+        method: "PUT",
+        body: { isHidden, reason },
+      },
+    );
   }
 
   return runMutation(CONVEX_FUNCTIONS.setRestaurantVisibility, {
@@ -607,10 +661,13 @@ export async function addManagedRestaurantImage(payload) {
   const sessionToken = getRequiredSessionToken();
   if (!hasConvexConfig()) {
     const { restaurantId, ...body } = payload;
-    return localApi(`/api/owner/restaurants/${encodeURIComponent(restaurantId)}/images`, {
-      method: "POST",
-      body,
-    });
+    return localApi(
+      `/api/owner/restaurants/${encodeURIComponent(restaurantId)}/images`,
+      {
+        method: "POST",
+        body,
+      },
+    );
   }
 
   return runMutation(CONVEX_FUNCTIONS.addRestaurantImage, {
@@ -623,10 +680,13 @@ export async function addManagedMenuItem(payload) {
   const sessionToken = getRequiredSessionToken();
   if (!hasConvexConfig()) {
     const { restaurantId, ...body } = payload;
-    return localApi(`/api/owner/restaurants/${encodeURIComponent(restaurantId)}/menu-items`, {
-      method: "POST",
-      body,
-    });
+    return localApi(
+      `/api/owner/restaurants/${encodeURIComponent(restaurantId)}/menu-items`,
+      {
+        method: "POST",
+        body,
+      },
+    );
   }
 
   return runMutation(CONVEX_FUNCTIONS.addMenuItem, {
@@ -684,7 +744,9 @@ export async function getSavedSearchState() {
 
   if (!hasConvexConfig()) {
     try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEYS.localSearchState) || "null");
+      return JSON.parse(
+        localStorage.getItem(STORAGE_KEYS.localSearchState) || "null",
+      );
     } catch (_error) {
       return null;
     }

@@ -28,6 +28,12 @@ const MODERATOR_PASSWORD = "nearbytesadmin";
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || "";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const OVERPASS_REQUEST_TIMEOUT_MS = 3000;
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.openstreetmap.ru/api/interpreter",
+];
 
 // ─── Fallback tag pool for restaurants with no tags ──────────────────────────
 const FALLBACK_TAG_POOL = [
@@ -437,6 +443,7 @@ async function syncOpenStreetMapNearby(lat, lng) {
   const seen = new Set();
   const radiusSteps = [5000, 10000, 20000, 30000];
   let normalizedRestaurants = [];
+  let lastError = null;
 
   for (const radiusMeters of radiusSteps) {
     const query = `
@@ -449,13 +456,27 @@ async function syncOpenStreetMapNearby(lat, lng) {
 out center tags;
 `;
 
-    const data = await fetchJson("https://overpass-api.de/api/interpreter", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-      },
-      body: new URLSearchParams({ data: query }),
-    });
+    let data = null;
+    for (const endpoint of OVERPASS_ENDPOINTS) {
+      try {
+        data = await fetchJson(endpoint, {
+          method: "POST",
+          signal: AbortSignal.timeout(OVERPASS_REQUEST_TIMEOUT_MS),
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          },
+          body: new URLSearchParams({ data: query }),
+        });
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!data) {
+      // If every Overpass endpoint failed for this radius, bail out fast.
+      break;
+    }
 
     normalizedRestaurants = (data.elements || [])
       .map((element) => normalizeExternalRestaurantElement(element, lat, lng))
@@ -470,6 +491,10 @@ out center tags;
       });
 
     if (normalizedRestaurants.length >= 12) break;
+  }
+
+  if (!normalizedRestaurants.length && lastError) {
+    throw lastError;
   }
 
   return normalizedRestaurants
@@ -1082,11 +1107,9 @@ app.post("/api/auth/login", (req, res) => {
   if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
   if (user.is_banned) {
-    return res
-      .status(403)
-      .json({
-        error: user.banned_reason || "This account has been suspended.",
-      });
+    return res.status(403).json({
+      error: user.banned_reason || "This account has been suspended.",
+    });
   }
 
   const isValid = bcrypt.compareSync(password, user.password_hash);
@@ -1114,6 +1137,16 @@ app.get("/api/restaurants/nearby", async (req, res) => {
 
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
   const offset = decodeCursor(req.query.cursor);
+  const radiusMeters = Math.min(
+    Math.max(
+      Number(req.query.radiusMeters) ||
+        Number(process.env.OSM_NEARBY_RADIUS_METERS) ||
+        5000,
+      1000,
+    ),
+    30000,
+  );
+  const maxDistanceKm = radiusMeters / 1000;
   const dietaryFilters = String(req.query.dietary || "")
     .split(",")
     .map((t) => t.trim().toLowerCase())
@@ -1158,6 +1191,11 @@ app.get("/api/restaurants/nearby", async (req, res) => {
       ...normalizeRestaurantRow(row),
       distanceKm: haversineKm(lat, lng, row.lat, row.lng),
     }))
+    .filter(
+      (restaurant) =>
+        Number.isFinite(restaurant.distanceKm) &&
+        restaurant.distanceKm <= maxDistanceKm,
+    )
     .filter((r) =>
       dietaryFilters.every((tag) =>
         r.dietaryTags.map((t) => t.toLowerCase()).includes(tag),
