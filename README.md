@@ -32,6 +32,24 @@
 
 ---
 
+## Demo
+
+### Video
+
+- Youtube: https://www.youtube.com/watch?v=lUYu1xLOP3s
+
+### Screenshots
+
+#### Light Mode
+
+![NearbyBites Light Mode](NearBytesLight.png)
+
+#### Dark Mode
+
+![NearbyBites Dark Mode](NearBytesDark.png)
+
+---
+
 ## Quick Start
 
 ### Prerequisites

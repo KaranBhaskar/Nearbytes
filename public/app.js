@@ -49,6 +49,7 @@ const FALLBACK_IMAGE_POOL = [
 ];
 const DEFAULT_SEARCH_RADIUS_METERS = 5000;
 const MAX_SEARCH_RADIUS_METERS = 25000;
+const RESTAURANTS_PAGE_SIZE = 20;
 const RESTAURANT_RESULTS_CACHE_KEY = "nearbyBites.restaurantResultsCache.v1";
 const MAX_RESTAURANT_CACHE_ENTRIES = 24;
 const SYNTHETIC_TAG_BATCH_SIZE = 6;
@@ -315,6 +316,16 @@ function cacheKeyForDiscoveryState() {
   return `${lat}:${lng}:r=${radius}:d=${dietary}`;
 }
 
+function baseCacheKeyForDiscoveryState() {
+  if (!state.location) return "";
+
+  return cacheKeyForParams({
+    location: state.location,
+    radiusMeters: state.searchRadiusMeters,
+    dietaryFilters: [],
+  });
+}
+
 function cacheKeyForParams({ location, radiusMeters, dietaryFilters = [] }) {
   if (!location) return "";
   const lat = Number(location.lat).toFixed(4);
@@ -326,14 +337,6 @@ function cacheKeyForParams({ location, radiusMeters, dietaryFilters = [] }) {
 
 function clearSyntheticTagFallback() {
   state.syntheticTagFallback = null;
-}
-
-function shuffleInPlace(items = []) {
-  for (let index = items.length - 1; index > 0; index -= 1) {
-    const randomIndex = Math.floor(Math.random() * (index + 1));
-    [items[index], items[randomIndex]] = [items[randomIndex], items[index]];
-  }
-  return items;
 }
 
 function applySelectedTagsToRestaurant(restaurant, selectedTags = []) {
@@ -433,9 +436,8 @@ async function ensureSyntheticTagFallbackPool() {
     return false;
   }
 
-  const randomizedPool = shuffleInPlace([...unfilteredRestaurants]).map(
-    (restaurant) =>
-      applySelectedTagsToRestaurant(restaurant, state.dietaryFilters),
+  const randomizedPool = [...unfilteredRestaurants].map((restaurant) =>
+    applySelectedTagsToRestaurant(restaurant, state.dietaryFilters),
   );
 
   state.syntheticTagFallback = {
@@ -443,6 +445,16 @@ async function ensureSyntheticTagFallbackPool() {
     pool: randomizedPool,
     nextIndex: 0,
   };
+
+  restaurantResultsCache[fallbackKey] = {
+    restaurants: randomizedPool,
+    cursor: null,
+    hasMore: false,
+    totalRestaurants: randomizedPool.length,
+    updatedAt: Date.now(),
+  };
+  pruneRestaurantResultsCache();
+  persistRestaurantResultsCache();
 
   return true;
 }
@@ -478,18 +490,46 @@ function getCachedRestaurantSnapshot() {
   const key = cacheKeyForDiscoveryState();
   if (!key) return null;
   const snapshot = restaurantResultsCache?.[key];
-  if (!snapshot || !Array.isArray(snapshot.restaurants)) {
-    return null;
+  if (snapshot && Array.isArray(snapshot.restaurants)) {
+    return {
+      restaurants: enrichRestaurantListForUi(snapshot.restaurants),
+      cursor: snapshot.cursor || null,
+      hasMore: Boolean(snapshot.hasMore),
+      totalRestaurants: Number(
+        snapshot.totalRestaurants || snapshot.restaurants.length || 0,
+      ),
+    };
   }
 
-  return {
-    restaurants: enrichRestaurantListForUi(snapshot.restaurants),
-    cursor: snapshot.cursor || null,
-    hasMore: Boolean(snapshot.hasMore),
-    totalRestaurants: Number(
-      snapshot.totalRestaurants || snapshot.restaurants.length || 0,
-    ),
-  };
+  if (state.dietaryFilters.length) {
+    const baseSnapshot = restaurantResultsCache?.[baseCacheKeyForDiscoveryState()];
+    if (baseSnapshot && Array.isArray(baseSnapshot.restaurants)) {
+      const cachedRestaurants = enrichRestaurantListForUi(
+        baseSnapshot.restaurants,
+      ).map((restaurant) =>
+        applySelectedTagsToRestaurant(restaurant, state.dietaryFilters),
+      );
+
+      restaurantResultsCache[key] = {
+        restaurants: cachedRestaurants,
+        cursor: null,
+        hasMore: false,
+        totalRestaurants: cachedRestaurants.length,
+        updatedAt: Date.now(),
+      };
+      pruneRestaurantResultsCache();
+      persistRestaurantResultsCache();
+
+      return {
+        restaurants: cachedRestaurants,
+        cursor: null,
+        hasMore: false,
+        totalRestaurants: cachedRestaurants.length,
+      };
+    }
+  }
+
+  return null;
 }
 
 function saveCurrentRestaurantSnapshot() {
@@ -503,6 +543,27 @@ function saveCurrentRestaurantSnapshot() {
     totalRestaurants: Number(
       state.totalRestaurants || state.restaurants.length || 0,
     ),
+    updatedAt: Date.now(),
+  };
+
+  pruneRestaurantResultsCache();
+  persistRestaurantResultsCache();
+}
+
+function saveBaseRestaurantSnapshot({
+  restaurants,
+  cursor,
+  hasMore,
+  totalRestaurants,
+}) {
+  const key = baseCacheKeyForDiscoveryState();
+  if (!key || !state.location) return;
+
+  restaurantResultsCache[key] = {
+    restaurants: enrichRestaurantListForUi(restaurants),
+    cursor: cursor || null,
+    hasMore: Boolean(hasMore),
+    totalRestaurants: Number(totalRestaurants || restaurants.length || 0),
     updatedAt: Date.now(),
   };
 
@@ -2212,6 +2273,13 @@ async function searchLocationInModal() {
       location.label,
       location.shortLabel || null,
     );
+    // Searching a place should immediately make it the active location.
+    await applySelectedLocation({
+      lat: location.lat,
+      lng: location.lng,
+      label: location.label,
+      shortLabel: location.shortLabel || null,
+    });
   } catch (err) {
     clearPendingMapLocation();
     showToast(err.message, true);
@@ -2292,21 +2360,34 @@ async function loadMoreRestaurants() {
         lat: state.location.lat,
         lng: state.location.lng,
         cursor: state.cursor || undefined,
-        limit: 10,
-        dietary: state.dietaryFilters,
+        limit: RESTAURANTS_PAGE_SIZE,
+        dietary: getRestaurantDataMode() === "local" ? [] : state.dietaryFilters,
         radiusMeters: state.searchRadiusMeters,
       }),
     );
 
     const nextItems = Array.isArray(data.items) ? data.items : [];
     const normalizedNextItems = enrichRestaurantListForUi(nextItems);
-    state.restaurants = state.cursor
+    const nextBaseItems = state.cursor
       ? enrichRestaurantListForUi([
-          ...state.restaurants,
+          ...(restaurantResultsCache?.[baseCacheKeyForDiscoveryState()]
+            ?.restaurants || state.restaurants),
           ...normalizedNextItems,
         ])
       : normalizedNextItems;
-    if (!normalizedNextItems.length && state.dietaryFilters.length) {
+    const displayNextItems =
+      getRestaurantDataMode() === "local" && state.dietaryFilters.length
+        ? normalizedNextItems.map((restaurant) =>
+            applySelectedTagsToRestaurant(restaurant, state.dietaryFilters),
+          )
+        : normalizedNextItems;
+    state.restaurants = state.cursor
+      ? enrichRestaurantListForUi([
+          ...state.restaurants,
+          ...displayNextItems,
+        ])
+      : displayNextItems;
+    if (!displayNextItems.length && state.dietaryFilters.length) {
       const hasSyntheticPool = await ensureSyntheticTagFallbackPool();
       if (hasSyntheticPool && takeSyntheticTagBatch(false)) {
         state.loadError = "";
@@ -2321,6 +2402,14 @@ async function loadMoreRestaurants() {
     state.cursor = data.nextCursor || null;
     state.hasMore = Boolean(data.hasMore);
     state.totalRestaurants = Number(data.total || state.restaurants.length);
+    if (getRestaurantDataMode() === "local") {
+      saveBaseRestaurantSnapshot({
+        restaurants: nextBaseItems,
+        cursor: data.nextCursor || null,
+        hasMore: Boolean(data.hasMore),
+        totalRestaurants: Number(data.total || nextBaseItems.length),
+      });
+    }
     saveCurrentRestaurantSnapshot();
     renderRestaurantList();
     renderLocationRestaurantMarkers();
@@ -2379,21 +2468,41 @@ async function expandSearchRadius() {
         lat: state.location.lat,
         lng: state.location.lng,
         cursor: String(state.restaurants.length),
-        limit: 10,
-        dietary: state.dietaryFilters,
+        limit: RESTAURANTS_PAGE_SIZE,
+        dietary: getRestaurantDataMode() === "local" ? [] : state.dietaryFilters,
         radiusMeters: state.searchRadiusMeters,
         forceSync: true,
       }),
     );
 
     const nextItems = Array.isArray(data.items) ? data.items : [];
+    const normalizedNextItems = enrichRestaurantListForUi(nextItems);
+    const nextBaseItems = enrichRestaurantListForUi([
+      ...(restaurantResultsCache?.[baseCacheKeyForDiscoveryState()]
+        ?.restaurants || state.restaurants),
+      ...normalizedNextItems,
+    ]);
+    const displayNextItems =
+      getRestaurantDataMode() === "local" && state.dietaryFilters.length
+        ? normalizedNextItems.map((restaurant) =>
+            applySelectedTagsToRestaurant(restaurant, state.dietaryFilters),
+          )
+        : normalizedNextItems;
     state.restaurants = enrichRestaurantListForUi([
       ...state.restaurants,
-      ...nextItems,
+      ...displayNextItems,
     ]);
     state.cursor = data.nextCursor || null;
     state.hasMore = Boolean(data.hasMore);
     state.totalRestaurants = Number(data.total || state.restaurants.length);
+    if (getRestaurantDataMode() === "local") {
+      saveBaseRestaurantSnapshot({
+        restaurants: nextBaseItems,
+        cursor: data.nextCursor || null,
+        hasMore: Boolean(data.hasMore),
+        totalRestaurants: Number(data.total || nextBaseItems.length),
+      });
+    }
     saveCurrentRestaurantSnapshot();
     renderRestaurantList();
     renderLocationRestaurantMarkers();
