@@ -1802,6 +1802,72 @@ function closeAuthModal() {
   els.authModal.classList.add("hidden");
 }
 
+function clearPendingMapLocation() {
+  state.pendingMapLocation = null;
+
+  if (locationMarker?.remove) {
+    locationMarker.remove();
+    locationMarker = null;
+  }
+
+  if (googleLocationMarker?.setMap) {
+    googleLocationMarker.setMap(null);
+    googleLocationMarker = null;
+  }
+}
+
+function buildLocationSearchCandidates(query) {
+  const normalized = String(query || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  const candidates = [];
+  const seen = new Set();
+
+  const addCandidate = (value) => {
+    const next = String(value || "").trim();
+    if (!next) return;
+    const key = next.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(next);
+  };
+
+  addCandidate(normalized);
+
+  // Tolerate simple adjacent-letter typos (e.g. "toronot" -> "toronto").
+  const compact = normalized.replace(/\s+/g, "");
+  if (compact.length >= 5) {
+    for (let index = 0; index < compact.length - 1; index += 1) {
+      const chars = compact.split("");
+      const temp = chars[index];
+      chars[index] = chars[index + 1];
+      chars[index + 1] = temp;
+      addCandidate(chars.join(""));
+      if (candidates.length >= 8) {
+        break;
+      }
+    }
+  }
+
+  return candidates;
+}
+
+async function searchMapLocationWithTypos(query) {
+  const candidates = buildLocationSearchCandidates(query);
+  let lastError = null;
+
+  for (const candidate of candidates) {
+    try {
+      const location = await searchMapLocation(candidate);
+      return location;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("Location not found");
+}
+
 function setPendingMapLocation(lat, lng, label = null, shortLabel = null) {
   state.pendingMapLocation = { lat, lng, label, shortLabel };
   setLocationSearchInputValue(label || shortLabel || "");
@@ -2138,7 +2204,7 @@ async function searchLocationInModal() {
   try {
     els.mapSelectionStatus.textContent = "Searching location...";
     const location = await withLoading("Searching for that location...", () =>
-      searchMapLocation(query),
+      searchMapLocationWithTypos(query),
     );
     setPendingMapLocation(
       location.lat,
@@ -2147,6 +2213,7 @@ async function searchLocationInModal() {
       location.shortLabel || null,
     );
   } catch (err) {
+    clearPendingMapLocation();
     showToast(err.message, true);
     els.mapSelectionStatus.textContent = "Search failed. Try another query.";
   }
