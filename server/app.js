@@ -28,7 +28,7 @@ const MODERATOR_PASSWORD = "nearbytesadmin";
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || "";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const OVERPASS_REQUEST_TIMEOUT_MS = 3000;
+const OVERPASS_REQUEST_TIMEOUT_MS = 8000;
 const OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
@@ -451,7 +451,6 @@ async function syncOpenStreetMapNearby(lat, lng) {
 (
   node["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:${radiusMeters},${lat},${lng});
   way["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:${radiusMeters},${lat},${lng});
-  relation["amenity"~"^(restaurant|fast_food|cafe|food_court)$"](around:${radiusMeters},${lat},${lng});
 );
 out center tags;
 `;
